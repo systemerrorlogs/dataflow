@@ -1,10 +1,14 @@
-// ==============================================
-// /app/api/teams/[teamId]/tasks/route.js
-// ==============================================
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { query } from '@/lib/db';
 
 export async function GET(req, { params }) {
+  const session = await getServerSession(authOptions);
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const { teamId } = params;
 
@@ -38,17 +42,31 @@ export async function GET(req, { params }) {
 }
 
 export async function POST(req, { params }) {
+  const session = await getServerSession(authOptions);
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const userId = session.user.id; // Use this for created_by
+
   try {
     const { teamId } = params;
     const body = await req.json();
-    const { name, description, source_connection_id, target_connection_id, source_query, target_table } = body;
+    const {
+      name,
+      description,
+      source_connection_id,
+      target_connection_id,
+      source_query,
+      target_table
+    } = body;
 
     const result = await query(
       `INSERT INTO tasks (team_id, name, description, source_connection_id, target_connection_id,
                           source_query, target_table, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [teamId, name, description, source_connection_id, target_connection_id, source_query, target_table]
+      [teamId, name, description, source_connection_id, target_connection_id, source_query, target_table, userId]
     );
 
     return NextResponse.json(result.rows[0], { status: 201 });

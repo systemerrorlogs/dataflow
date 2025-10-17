@@ -1,10 +1,20 @@
-// ==============================================
-// /app/api/teams/[teamId]/connections/[id]/route.js
-// ==============================================
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { query } from '@/lib/db';
 
+// ============================================
+// PATCH - Update connection
+// ============================================
 export async function PATCH(req, { params }) {
+  // 1. Check authentication
+  const session = await getServerSession(authOptions);
+
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // 2. Proceed with update
   try {
     const { teamId, id } = params;
     const body = await req.json();
@@ -28,7 +38,18 @@ export async function PATCH(req, { params }) {
   }
 }
 
+// ============================================
+// DELETE - Delete connection
+// ============================================
 export async function DELETE(req, { params }) {
+  // 1. Check authentication
+  const session = await getServerSession(authOptions);
+
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // 2. Proceed with deletion
   try {
     const { teamId, id } = params;
 
