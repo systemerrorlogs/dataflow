@@ -123,9 +123,12 @@ const TopBar = ({ setSidebarOpen, userTeams, currentUser }) => {
   const [teamDropdownOpen, setTeamDropdownOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    // Clear localStorage
     localStorage.clear();
-    window.location.href = '/login';
+
+    // Sign out without confirmation page
+    window.location.href = '/api/auth/signout?callbackUrl=/login';
   };
 
   return (
