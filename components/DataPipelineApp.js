@@ -1166,11 +1166,22 @@ const TaskFormPage = ({ taskFormData }) => {
             {loading ? 'Creating...' : 'Create Task'}
           </button>
           <button
-            onClick={() => window.history.back()}
-            className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-          >
-            Cancel
-          </button>
+  onClick={() => {
+    // Navigate back to either tasks list or query tool depending on where we came from
+    const fromQuery = localStorage.getItem('taskFormSource');
+    if (fromQuery === 'query') {
+      localStorage.removeItem('taskFormSource');
+      window.location.hash = '#query';
+      window.location.reload();
+    } else {
+      window.location.hash = '#tasks';
+      window.location.reload();
+    }
+  }}
+  className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+>
+  Cancel
+</button>
         </div>
       </div>
     </div>

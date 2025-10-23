@@ -13,49 +13,57 @@ export const authOptions = {
         password: { label: "Password", type: "password" }
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          throw new Error('Please enter email and password');
+          if (!credentials?.email || !credentials?.password) {
+            throw new Error('Please enter email and password');
+          }
+
+          console.log('🔍 Login attempt for:', credentials.email);
+
+          try {
+            const result = await query(
+              'SELECT * FROM users WHERE email = $1',
+              [credentials.email]
+            );
+
+            if (result.rows.length === 0) {
+              console.log('❌ No user found');
+              throw new Error('Invalid email or password');
+            }
+
+            const user = result.rows[0];
+            console.log('✅ User found:', user.email);
+            console.log('🔑 Has password_hash:', !!user.password_hash);
+
+            // Check if password_hash exists
+            if (!user.password_hash) {
+              console.log('❌ No password hash in database');
+              throw new Error('Account not properly configured. Please contact administrator.');
+            }
+
+            // Verify password
+            const isValid = await bcrypt.compare(
+              credentials.password,
+              user.password_hash
+            );
+
+            console.log('🔐 Password valid:', isValid);
+
+            if (!isValid) {
+              throw new Error('Invalid email or password');
+            }
+
+            console.log('✅ Login successful');
+
+            return {
+              id: user.id.toString(),
+              email: user.email,
+              name: user.name
+            };
+          } catch (error) {
+            console.error('❌ Auth error:', error);
+            throw error;
+          }
         }
-
-        try {
-          const result = await query(
-            'SELECT * FROM users WHERE email = $1 AND is_active = true',
-            [credentials.email]
-          );
-
-          if (result.rows.length === 0) {
-            throw new Error('No user found');
-          }
-
-          const user = result.rows[0];
-
-          if (!user.password_hash) {
-            throw new Error('Invalid login method');
-          }
-
-          const isValid = await bcrypt.compare(
-            credentials.password,
-            user.password_hash
-          );
-
-          if (!isValid) {
-            throw new Error('Invalid password');
-          }
-
-          await query(
-            'UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1',
-            [user.id]
-          );
-
-          return {
-            id: user.id.toString(),
-            email: user.email,
-            name: `${user.first_name} ${user.last_name}`,
-          };
-        } catch (error) {
-          throw new Error(error.message || 'Authentication failed');
-        }
-      }
     })
   ],
   session: {
@@ -82,9 +90,13 @@ export const authOptions = {
   },
   pages: {
     signIn: '/login',
+    signOut: '/login',  // ✅ Skip confirmation page
+    error: '/login',
   },
   secret: process.env.NEXTAUTH_SECRET,
 };
 
 const handler = NextAuth(authOptions);
+
+// ✅ CRITICAL: Export both GET and POST
 export { handler as GET, handler as POST };
