@@ -394,6 +394,7 @@ const ConnectionsPage = () => {
   const [showForm, setShowForm] = useState(false);
   const [editingConnection, setEditingConnection] = useState(null);
   const [testingConnection, setTestingConnection] = useState(null);
+  const [testingInForm, setTestingInForm] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     connection_type: 'database',
@@ -482,6 +483,49 @@ const ConnectionsPage = () => {
     }
   };
 
+  const handleTestConnectionInForm = async () => {
+      // Validate required fields
+      if (!formData.name.trim()) {
+        alert('Please enter a connection name');
+        return;
+      }
+
+      if (Object.keys(formData.config).length === 0) {
+        alert('Please enter connection configuration');
+        return;
+      }
+
+      try {
+        setTestingInForm(true);
+
+        // Get current team ID from context or localStorage
+        const currentTeamId = localStorage.getItem('currentTeamId');
+
+        // Test the connection using the current form data
+        const result = await fetch(`/api/teams/${currentTeamId}/connections/test`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            connection_type: formData.connection_type,
+            config: formData.config
+          })
+        });
+
+        const data = await result.json();
+
+        if (data.success) {
+          alert('✓ Connection test successful!\n\n' + data.message);
+        } else {
+          alert('✗ Connection test failed:\n\n' + (data.error || 'Unknown error'));
+        }
+      } catch (error) {
+        console.error('Failed to test connection:', error);
+        alert('✗ Connection test failed:\n\n' + error.message);
+      } finally {
+        setTestingInForm(false);
+      }
+    };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -531,12 +575,11 @@ const ConnectionsPage = () => {
               onChange={(e) => setFormData({ ...formData, connection_type: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg"
             >
-              <option value="database">Database</option>
-              <option value="sftp">SFTP</option>
-              <option value="excel">Excel</option>
+              <option value="postgresql">PostgreSQL</option>
+              <option value="oracle">Oracle</option>
+              <option value="mysql">MySQL</option>
               <option value="csv">CSV</option>
-              <option value="api">API</option>
-              <option value="flatfile">Flat File</option>
+              <option value="excel">Excel</option>
             </select>
           </div>
 
@@ -581,23 +624,37 @@ const ConnectionsPage = () => {
             />
           </div>
 
-          <div className="flex gap-2 pt-4">
-            <button
-              onClick={handleSubmit}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              {editingConnection ? 'Update' : 'Create'} Connection
-            </button>
-            <button
-              onClick={() => {
-                setShowForm(false);
-                setEditingConnection(null);
-              }}
-              className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-          </div>
+          <div className="flex gap-2 pt-4 border-t">
+              <button
+                onClick={handleTestConnectionInForm}
+                disabled={testingInForm}
+                className="px-6 py-2 border border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {testingInForm ? 'Testing...' : 'Test Connection'}
+              </button>
+              <button
+                onClick={handleSubmit}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                {editingConnection ? 'Update' : 'Create'} Connection
+              </button>
+              <button
+                onClick={() => {
+                  setShowForm(false);
+                  setEditingConnection(null);
+                  setFormData({
+                    name: '',
+                    connection_type: 'postgresql',
+                    can_be_source: true,
+                    can_be_target: true,
+                    config: {}
+                  });
+                }}
+                className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
         </div>
       </div>
     );
@@ -816,16 +873,16 @@ const QueryToolPage = ({ setCurrentPage, setTaskFormData }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {queryResults.rows.map((row, i) => (
-                      <tr key={i} className="hover:bg-gray-50">
-                        {row.map((cell, j) => (
-                          <td key={j} className="px-6 py-4 text-sm text-gray-900">
-                            {cell}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
+                      {queryResults.rows.map((row, i) => (
+                        <tr key={i} className="hover:bg-gray-50">
+                          {queryResults.columns.map((col, j) => (
+                            <td key={j} className="px-6 py-4 text-sm text-gray-900">
+                              {row[col] !== null && row[col] !== undefined ? String(row[col]) : ''}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
                 </table>
               </div>
             </>
