@@ -618,7 +618,6 @@ const ConnectionsPage = () => {
               <option value="salesforce">Salesforce</option>
               <option value="servicenow">ServiceNow</option>
               <option value="csv">CSV</option>
-              <option value="excel">Excel</option>
             </select>
           </div>
 
