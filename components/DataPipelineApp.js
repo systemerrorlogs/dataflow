@@ -1,5 +1,7 @@
 import React, { useState, useMemo, createContext, useContext, useEffect } from 'react';
 import { Home, Database, Search, FileText, Plus, RefreshCw, Menu, X, User, LogOut, CheckCircle, XCircle, Clock, PlayCircle, Settings, ChevronDown, BookOpen, HelpCircle } from 'lucide-react';
+import LogsModal from './LogsModal';
+import ExecutionHistoryModal from './ExecutionHistoryModal';
 
 const TeamContext = createContext();
 
@@ -206,10 +208,16 @@ const TopBar = ({ setSidebarOpen, userTeams, currentUser }) => {
 };
 
 const DashboardPage = () => {
-  const [selectedStatus, setSelectedStatus] = useState('all');
-  const [stats, setStats] = useState(null);
+  const [stats, setStats] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedStatus, setSelectedStatus] = useState('all');
+  const [historyModal, setHistoryModal] = useState({
+    isOpen: false,
+    taskId: null,
+    taskName: ''
+  });
+  const [monitoringExecution, setMonitoringExecution] = useState(null);
 
   useEffect(() => {
     loadDashboard();
@@ -231,6 +239,14 @@ const DashboardPage = () => {
     }
   };
 
+  const handleViewLogs = (task) => {
+    setHistoryModal({
+      isOpen: true,
+      taskId: task.id,
+      taskName: task.name
+    });
+  };
+
   const statusCounts = useMemo(() => {
     if (!stats) return { total: 0, success: 0, failed: 0, running: 0 };
 
@@ -249,7 +265,8 @@ const DashboardPage = () => {
 
   const handleRetryTask = async (taskId) => {
     try {
-      await api.tasks.execute(taskId);
+      const result = await api.tasks.execute(taskId);
+      setMonitoringExecution(result.executionId);
       await loadDashboard();
     } catch (error) {
       console.error('Failed to retry task:', error);
@@ -364,11 +381,12 @@ const DashboardPage = () => {
                   <td className="px-6 py-4 text-sm">
                     <div className="flex gap-2">
                       <button
-                        className="text-blue-600 hover:text-blue-800"
-                        title="View Logs"
-                      >
-                        <FileText size={16} />
-                      </button>
+                          onClick={() => handleViewLogs(task)}
+                          className="text-blue-600 hover:text-blue-800"
+                          title="View Execution History"
+                        >
+                          <FileText size={16} />
+                        </button>
                       <button
                         onClick={() => handleRetryTask(task.id)}
                         className="text-green-600 hover:text-green-800"
@@ -384,6 +402,21 @@ const DashboardPage = () => {
           </table>
         </div>
       </div>
+      {monitoringExecution && (
+        <ExecutionMonitor
+          executionId={monitoringExecution}
+          onClose={() => {
+            setMonitoringExecution(null);
+            loadDashboard();
+          }}
+        />
+      )}
+      <ExecutionHistoryModal
+        isOpen={historyModal.isOpen}
+        onClose={() => setHistoryModal({ isOpen: false, taskId: null, taskName: '' })}
+        taskId={historyModal.taskId}
+        taskName={historyModal.taskName}
+      />
     </div>
   );
 };
@@ -897,13 +930,38 @@ const QueryToolPage = ({ setCurrentPage, setTaskFormData }) => {
   );
 };
 
-const TasksPage = ({ setCurrentPage }) => {
+const TasksPage = ({ setCurrentPage, setTaskFormData }) => {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [logsModal, setLogsModal] = useState({
+    isOpen: false,
+    executionId: null,
+    taskName: ''
+  });
 
   useEffect(() => {
     loadTasks();
   }, []);
+
+  // Handler for running a task with logs modal
+  const handleRunTask = async (task) => {
+    try {
+      const response = await api.tasks.execute(task.id);
+
+      // Open logs modal with the new execution ID
+      setLogsModal({
+        isOpen: true,
+        executionId: response.execution_id,
+        taskName: task.name
+      });
+
+      // Refresh tasks list after a delay
+      setTimeout(loadTasks, 3000);
+
+    } catch (error) {
+      alert('Failed to run task: ' + error.message);
+    }
+  };
 
   const loadTasks = async () => {
     try {
@@ -916,6 +974,12 @@ const TasksPage = ({ setCurrentPage }) => {
       setLoading(false);
     }
   };
+
+  const handleEditTask = (taskId) => {
+      console.log('Editing task:', taskId);
+      setTaskFormData({ taskId: taskId });
+      setCurrentPage('task-form');
+    };
 
   if (loading) {
     return (
@@ -975,11 +1039,14 @@ const TasksPage = ({ setCurrentPage }) => {
                   </td>
                   <td className="px-6 py-4 text-sm">
                     <div className="flex gap-2">
-                      <button className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50 text-xs">
-                        Edit
-                      </button>
                       <button
-                        onClick={() => api.tasks.execute(task.id)}
+                          onClick={() => handleEditTask(task.id)}
+                          className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50 text-xs"
+                        >
+                          Edit
+                        </button>
+                      <button
+                        onClick={() => handleRunTask(task)}
                         className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-xs"
                       >
                         Run
@@ -992,24 +1059,42 @@ const TasksPage = ({ setCurrentPage }) => {
           </table>
         </div>
       </div>
+      <LogsModal
+        isOpen={logsModal.isOpen}
+        onClose={() => setLogsModal({ isOpen: false, executionId: null, taskName: '' })}
+        executionId={logsModal.executionId}
+        taskName={logsModal.taskName}
+      />
     </div>
   );
 };
 
-const TaskFormPage = ({ taskFormData }) => {
+const TaskFormPage = ({ taskFormData, setCurrentPage }) => {
   const [connections, setConnections] = useState([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [sourceConnection, setSourceConnection] = useState(taskFormData?.sourceConnection || '');
+  const [sourceConnection, setSourceConnection] = useState('');
   const [targetConnection, setTargetConnection] = useState('');
-  const [sourceQuery, setSourceQuery] = useState(taskFormData?.sourceQuery || '');
-  const [sourceWorksheet, setSourceWorksheet] = useState(taskFormData?.worksheetName || '');
+  const [sourceQuery, setSourceQuery] = useState('');
+  const [sourceWorksheet, setSourceWorksheet] = useState('');
   const [targetTable, setTargetTable] = useState('');
   const [targetWorksheet, setTargetWorksheet] = useState('');
+  const [loadStrategy, setLoadStrategy] = useState('create_if_not_exists');
   const [loading, setLoading] = useState(false);
+  const [loadingTask, setLoadingTask] = useState(false);
+
+  const isEditMode = taskFormData?.taskId;
 
   useEffect(() => {
     loadConnections();
+    if (isEditMode) {
+      loadTask();
+    } else if (taskFormData?.sourceConnection) {
+      // Pre-fill from query tool
+      setSourceConnection(taskFormData.sourceConnection);
+      setSourceQuery(taskFormData.sourceQuery || '');
+      setSourceWorksheet(taskFormData.worksheetName || '');
+    }
   }, []);
 
   const loadConnections = async () => {
@@ -1021,73 +1106,177 @@ const TaskFormPage = ({ taskFormData }) => {
     }
   };
 
-  const handleSubmit = async () => {
-    const sourceConn = connections.find(c => c.id === parseInt(sourceConnection));
-    const targetConn = connections.find(c => c.id === parseInt(targetConnection));
-
-    // Validation
-    if (!name || !sourceConnection || !targetConnection || !sourceQuery || !targetTable) {
-      alert('Please fill in all required fields');
-      return;
-    }
-
-    if (sourceConn?.connection_type === 'excel' && !sourceWorksheet) {
-      alert('Worksheet name is required for Excel source connections');
-      return;
-    }
-
-    if (targetConn?.connection_type === 'excel' && !targetWorksheet) {
-      alert('Worksheet name is required for Excel target connections');
-      return;
-    }
-
+  const loadTask = async () => {
     try {
-      setLoading(true);
-      await api.tasks.create({
-        name,
-        description,
-        source_connection_id: parseInt(sourceConnection),
-        target_connection_id: parseInt(targetConnection),
-        source_query: sourceQuery,
-        source_worksheet: sourceWorksheet || undefined,
-        target_table: targetTable,
-        target_worksheet: targetWorksheet || undefined,
-        transformation_config: {}
-      });
-      alert('Task created successfully!');
-      setName('');
-      setDescription('');
-      setSourceConnection('');
-      setTargetConnection('');
-      setSourceQuery('');
-      setSourceWorksheet('');
-      setTargetTable('');
-      setTargetWorksheet('');
+      setLoadingTask(true);
+      const task = await api.tasks.get(taskFormData.taskId);
+
+      // Populate form fields with task data
+      setName(task.name);
+      setDescription(task.description || '');
+      setSourceConnection(task.source_connection_id);
+      setTargetConnection(task.target_connection_id);
+      setSourceQuery(task.source_query);
+      setSourceWorksheet(task.source_worksheet || '');
+      setTargetTable(task.target_table);
+      setTargetWorksheet(task.target_worksheet || '');
+      setLoadStrategy(task.transformation_config?.load_strategy || 'create_if_not_exists');
     } catch (error) {
-      console.error('Failed to create task:', error);
-      alert(`Failed to create task: ${error.message}`);
+      console.error('Failed to load task:', error);
+      alert('Failed to load task');
     } finally {
-      setLoading(false);
+      setLoadingTask(false);
     }
   };
 
   const sourceConnections = connections.filter(c => c.can_be_source);
   const targetConnections = connections.filter(c => c.can_be_target);
 
-  const selectedSourceConn = connections.find(c => c.id === parseInt(sourceConnection));
-  const selectedTargetConn = connections.find(c => c.id === parseInt(targetConnection));
-  const isSourceExcel = selectedSourceConn?.connection_type === 'excel';
-  const isTargetExcel = selectedTargetConn?.connection_type === 'excel';
+  const sourceConn = connections.find(c => c.id === parseInt(sourceConnection));
+  const targetConn = connections.find(c => c.id === parseInt(targetConnection));
+
+  const isSourceExcel = sourceConn?.connection_type === 'excel';
+  const isTargetExcel = targetConn?.connection_type === 'excel';
+  const isTargetDatabase = targetConn && ['postgresql', 'mysql'].includes(targetConn.connection_type);
+
+  // Improved handleSubmit for TaskForm component
+    // Replace your existing handleSubmit function with this one
+
+    const handleSubmit = async () => {
+      // Validation
+      if (!name || !sourceConnection || !targetConnection || !sourceQuery || !targetTable) {
+        alert('Please fill in all required fields');
+        return;
+      }
+
+      if (isSourceExcel && !sourceWorksheet) {
+        alert('Worksheet name is required for Excel source connections');
+        return;
+      }
+
+      if (isTargetExcel && !targetWorksheet) {
+        alert('Worksheet name is required for Excel target connections');
+        return;
+      }
+
+      try {
+        setLoading(true);
+
+        const taskData = {
+          name,
+          description: description || '',
+          source_connection_id: parseInt(sourceConnection),
+          target_connection_id: parseInt(targetConnection),
+          source_query: sourceQuery,
+          source_worksheet: sourceWorksheet || undefined,
+          target_table: targetTable,
+          target_worksheet: targetWorksheet || undefined,
+          transformation_config: {
+            load_strategy: loadStrategy
+          }
+        };
+
+        console.log('Submitting task data:', taskData);
+
+        let response;
+        if (isEditMode) {
+          response = await fetch(`/api/teams/${localStorage.getItem('currentTeamId')}/tasks/${taskFormData.taskId}`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(taskData),
+          });
+        } else {
+          response = await fetch(`/api/teams/${localStorage.getItem('currentTeamId')}/tasks`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(taskData),
+          });
+        }
+
+        console.log('Response status:', response.status);
+        console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+
+        // Check if response is ok before parsing
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('Error response text:', errorText);
+
+          try {
+            const errorJson = JSON.parse(errorText);
+            throw new Error(errorJson.error || `HTTP error! status: ${response.status}`);
+          } catch (parseError) {
+            throw new Error(`HTTP error! status: ${response.status}. Response: ${errorText}`);
+          }
+        }
+
+        // Get response text first to check if it's empty
+        const responseText = await response.text();
+        console.log('Response text:', responseText);
+
+        if (!responseText) {
+          throw new Error('Empty response from server');
+        }
+
+        // Try to parse as JSON
+        let result;
+        try {
+          result = JSON.parse(responseText);
+        } catch (parseError) {
+          console.error('Failed to parse response as JSON:', parseError);
+          console.error('Response text was:', responseText);
+          throw new Error('Invalid JSON response from server');
+        }
+
+        console.log('Task saved successfully:', result);
+        alert(isEditMode ? 'Task updated successfully!' : 'Task created successfully!');
+
+        // Reset form or navigate
+        if (!isEditMode) {
+          setName('');
+          setDescription('');
+          setSourceConnection('');
+          setTargetConnection('');
+          setSourceQuery('');
+          setSourceWorksheet('');
+          setTargetTable('');
+          setTargetWorksheet('');
+          setLoadStrategy('create_if_not_exists');
+        }
+
+        // Navigate back to tasks page
+        setCurrentPage('tasks');
+
+      } catch (error) {
+        console.error('Failed to save task:', error);
+        console.error('Error stack:', error.stack);
+        alert(`Failed to save task: ${error.message}`);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+
+  if (loadingTask) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-gray-600">Loading task...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Create Task</h1>
+      <h1 className="text-2xl font-bold text-gray-900">
+        {isEditMode ? 'Edit Task' : 'Create Task'}
+      </h1>
 
       <div className="bg-white p-6 rounded-lg border border-gray-200 space-y-6">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Task Name *
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Task Name *</label>
           <input
             type="text"
             value={name}
@@ -1098,26 +1287,22 @@ const TaskFormPage = ({ taskFormData }) => {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Description
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Describe what this task does..."
-            rows={3}
+            placeholder="Optional description..."
+            rows={2}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg"
           />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="space-y-4">
+          <div className="space-y-4 lg:border-r lg:border-gray-200 lg:pr-6">
             <h3 className="font-semibold text-lg text-gray-900">Source</h3>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Connection *
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Connection *</label>
               <select
                 value={sourceConnection}
                 onChange={(e) => setSourceConnection(e.target.value)}
@@ -1134,9 +1319,7 @@ const TaskFormPage = ({ taskFormData }) => {
 
             {isSourceExcel && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Worksheet Name *
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Worksheet Name *</label>
                 <input
                   type="text"
                   value={sourceWorksheet}
@@ -1149,9 +1332,7 @@ const TaskFormPage = ({ taskFormData }) => {
             )}
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Query / Path *
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Query / Path *</label>
               <textarea
                 value={sourceQuery}
                 onChange={(e) => setSourceQuery(e.target.value)}
@@ -1166,9 +1347,7 @@ const TaskFormPage = ({ taskFormData }) => {
             <h3 className="font-semibold text-lg text-gray-900">Target</h3>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Connection *
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Connection *</label>
               <select
                 value={targetConnection}
                 onChange={(e) => setTargetConnection(e.target.value)}
@@ -1185,9 +1364,7 @@ const TaskFormPage = ({ taskFormData }) => {
 
             {isTargetExcel && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Worksheet Name *
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Worksheet Name *</label>
                 <input
                   type="text"
                   value={targetWorksheet}
@@ -1200,17 +1377,39 @@ const TaskFormPage = ({ taskFormData }) => {
             )}
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Table / Path *
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Table / Path *</label>
               <input
                 type="text"
                 value={targetTable}
                 onChange={(e) => setTargetTable(e.target.value)}
-                placeholder={isTargetExcel ? "/path/to/output.xlsx" : "target_table or /path/to/file.csv"}
+                placeholder={isTargetExcel ? "/path/to/output.xlsx" : "target_table"}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               />
             </div>
+
+            {isTargetDatabase && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Load Strategy *</label>
+                <select
+                  value={loadStrategy}
+                  onChange={(e) => setLoadStrategy(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="append">Append</option>
+                  <option value="create_if_not_exists">Create If Not Exists</option>
+                  <option value="drop_and_create">Drop and Recreate</option>
+                  <option value="truncate_and_load">Truncate and Load</option>
+                  <option value="auto_alter">Auto Alter Columns</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  {loadStrategy === 'create_if_not_exists' && '✓ Table created automatically if needed'}
+                  {loadStrategy === 'drop_and_create' && '⚠ Table will be dropped and recreated'}
+                  {loadStrategy === 'truncate_and_load' && '⚠ All data will be deleted first'}
+                  {loadStrategy === 'auto_alter' && '✓ Missing columns added automatically'}
+                  {loadStrategy === 'append' && '✓ Data appended to existing table'}
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1218,27 +1417,16 @@ const TaskFormPage = ({ taskFormData }) => {
           <button
             onClick={handleSubmit}
             disabled={loading}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300"
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
           >
-            {loading ? 'Creating...' : 'Create Task'}
+            {loading ? (isEditMode ? 'Updating...' : 'Creating...') : (isEditMode ? 'Update Task' : 'Create Task')}
           </button>
           <button
-  onClick={() => {
-    // Navigate back to either tasks list or query tool depending on where we came from
-    const fromQuery = localStorage.getItem('taskFormSource');
-    if (fromQuery === 'query') {
-      localStorage.removeItem('taskFormSource');
-      window.location.hash = '#query';
-      window.location.reload();
-    } else {
-      window.location.hash = '#tasks';
-      window.location.reload();
-    }
-  }}
-  className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
->
-  Cancel
-</button>
+            onClick={() => setCurrentPage('tasks')}
+            className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            Cancel
+          </button>
         </div>
       </div>
     </div>
@@ -1318,6 +1506,187 @@ const DocumentationPage = () => {
   );
 };
 
+// Execution Monitor Component
+const ExecutionMonitor = ({ executionId, onClose }) => {
+  const [execution, setExecution] = useState(null);
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadExecutionData();
+    const interval = setInterval(loadExecutionData, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(interval);
+  }, [executionId]);
+
+  const loadExecutionData = async () => {
+    try {
+      const teamId = localStorage.getItem('currentTeamId');
+
+      // Get execution details
+      const execResponse = await fetch(`/api/teams/${teamId}/executions/${executionId}`);
+      const execData = await execResponse.json();
+      setExecution(execData);
+
+      // Get logs
+      const logsResponse = await fetch(`/api/teams/${teamId}/executions/${executionId}/logs`);
+      const logsData = await logsResponse.json();
+      setLogs(logsData);
+
+      setLoading(false);
+
+      // Stop polling if execution is complete
+      if (execData.status === 'success' || execData.status === 'failed') {
+        // Don't clear interval, let cleanup handle it
+      }
+    } catch (error) {
+      console.error('Failed to load execution data:', error);
+      setLoading(false);
+    }
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'running': return 'text-blue-600 bg-blue-100';
+      case 'success': return 'text-green-600 bg-green-100';
+      case 'failed': return 'text-red-600 bg-red-100';
+      default: return 'text-gray-600 bg-gray-100';
+    }
+  };
+
+  const getLogLevelColor = (level) => {
+    switch (level.toLowerCase()) {
+      case 'error': return 'text-red-600 bg-red-50';
+      case 'warning': return 'text-yellow-600 bg-yellow-50';
+      case 'info': return 'text-blue-600 bg-blue-50';
+      default: return 'text-gray-600 bg-gray-50';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4">
+          <div className="text-center">Loading execution details...</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg max-w-4xl w-full mx-4 max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Task Execution</h2>
+            <p className="text-sm text-gray-500">Execution ID: {executionId}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+            <X size={24} />
+          </button>
+        </div>
+
+        {/* Status Bar */}
+        <div className="p-6 border-b border-gray-200 bg-gray-50">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <div className="text-xs text-gray-500 uppercase mb-1">Status</div>
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(execution?.status)}`}>
+                {execution?.status}
+              </span>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 uppercase mb-1">Records Read</div>
+              <div className="text-lg font-semibold">{execution?.records_read || 0}</div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 uppercase mb-1">Records Written</div>
+              <div className="text-lg font-semibold">{execution?.records_written || 0}</div>
+            </div>
+            <div>
+              <div className="text-xs text-gray-500 uppercase mb-1">Duration</div>
+              <div className="text-lg font-semibold">
+                {execution?.duration_seconds ? `${execution.duration_seconds}s` :
+                 execution?.status === 'running' ? '...' : '-'}
+              </div>
+            </div>
+          </div>
+
+          {execution?.error_message && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded">
+              <div className="text-sm font-medium text-red-800">Error:</div>
+              <div className="text-sm text-red-700 mt-1">{execution.error_message}</div>
+            </div>
+          )}
+        </div>
+
+        {/* Logs */}
+        <div className="flex-1 overflow-y-auto p-6">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Execution Logs</h3>
+
+          {logs.length === 0 ? (
+            <div className="text-center text-gray-500 py-8">
+              {execution?.status === 'running' ? 'Waiting for logs...' : 'No logs available'}
+            </div>
+          ) : (
+            <div className="space-y-2 font-mono text-sm">
+              {logs.map((log, i) => (
+                <div key={i} className={`p-3 rounded ${getLogLevelColor(log.log_level)}`}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-xs text-gray-500 whitespace-nowrap">
+                      {new Date(log.logged_at).toLocaleTimeString()}
+                    </span>
+                    <span className="text-xs font-semibold uppercase">
+                      {log.log_level}
+                    </span>
+                    <span className="flex-1">{log.message}</span>
+                  </div>
+                  {log.context && (
+                    <pre className="mt-2 text-xs overflow-x-auto">
+                      {JSON.stringify(log.context)}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 border-t border-gray-200 flex justify-between items-center">
+          <div className="text-sm text-gray-500">
+            {execution?.status === 'running' && (
+              <span className="flex items-center gap-2">
+                <Clock size={16} className="animate-spin" />
+                Running... (auto-refreshing every 2s)
+              </span>
+            )}
+            {execution?.status === 'success' && (
+              <span className="flex items-center gap-2 text-green-600">
+                <CheckCircle size={16} />
+                Completed successfully
+              </span>
+            )}
+            {execution?.status === 'failed' && (
+              <span className="flex items-center gap-2 text-red-600">
+                <XCircle size={16} />
+                Execution failed
+              </span>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const DataPipelineApp = () => {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1329,6 +1698,24 @@ const DataPipelineApp = () => {
   useEffect(() => {
     loadUserTeams();
   }, []);
+
+  const renderPage = () => {
+    switch (currentPage) {
+      case 'dashboard':
+        return <DashboardPage />;
+      case 'connections':
+        return <ConnectionsPage />;
+      case 'query':
+        return <DataExplorerPage setCurrentPage={setCurrentPage} setTaskFormData={setTaskFormData} />;
+      case 'tasks':
+        return <TasksPage setCurrentPage={setCurrentPage} setTaskFormData={setTaskFormData} />;
+      case 'create-task':
+      case 'edit-task':
+        return <TaskFormPage taskFormData={taskFormData} setCurrentPage={setCurrentPage} />;
+      default:
+        return <DashboardPage />;
+    }
+  };
 
   const loadUserTeams = async () => {
     try {
@@ -1374,8 +1761,18 @@ const DataPipelineApp = () => {
                 setTaskFormData={setTaskFormData}
               />
             )}
-            {currentPage === 'tasks' && <TasksPage setCurrentPage={setCurrentPage} />}
-            {currentPage === 'task-form' && <TaskFormPage taskFormData={taskFormData} />}
+            {currentPage === 'tasks' && (
+            <TasksPage
+                setCurrentPage={setCurrentPage}
+                setTaskFormData={setTaskFormData}
+              />
+            )}
+            {currentPage === 'task-form' && (
+                <TaskFormPage
+                    taskFormData={taskFormData}
+                    setCurrentPage={setCurrentPage}
+                />
+              )}
             {currentPage === 'documentation' && <DocumentationPage />}
           </main>
         </div>
