@@ -5,6 +5,12 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { Pool } from 'pg';
+const sqlserver = require('@/lib/connectors/sqlserver');
+const vertica = require('@/lib/connectors/vertica');
+const cockroachdb = require('@/lib/connectors/cockroachdb');
+const salesforce = require('@/lib/connectors/salesforce');
+const servicenow = require('@/lib/connectors/servicenow');
+import { isConnectorEnabled } from '@/lib/config/connectors';
 
 // Test connection configurations
 async function testConnection(connectionType, config) {
@@ -15,6 +21,16 @@ async function testConnection(connectionType, config) {
       return await testOracle(config);
     case 'mysql':
       return await testMySQL(config);
+    case 'sqlserver':
+      return await sqlserver.testConnection(config);
+    case 'vertica':
+      return await vertica.testConnection(config);
+    case 'cockroachdb':
+      return await cockroachdb.testConnection(config);
+    case 'salesforce':
+      return await salesforce.testConnection(config);
+    case 'servicenow':
+      return await servicenow.testConnection(config);
     case 'excel':
       return await testExcel(config);
     case 'csv':
@@ -202,46 +218,27 @@ async function testCSV(config) {
 }
 
 // POST endpoint - Test connection with configuration
-export async function POST(req, { params }) {
-  // Check authentication
-  const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
+export async function POST(request, { params }) {
   try {
-    const { teamId } = params;
-    const body = await req.json();
-    const { connection_type, config } = body;
+    const { connection_type, config } = await request.json();
 
-    // Validate input
-    if (!connection_type) {
+    // Check if connector is enabled
+    if (!isConnectorEnabled(connection_type)) {
       return NextResponse.json(
-        { success: false, error: 'connection_type is required' },
-        { status: 400 }
+        {
+          success: false,
+          error: `Connector type '${connection_type}' is currently disabled`
+        },
+        { status: 403 }
       );
     }
 
-    if (!config || typeof config !== 'object') {
-      return NextResponse.json(
-        { success: false, error: 'config object is required' },
-        { status: 400 }
-      );
-    }
-
-    // Test the connection
     const result = await testConnection(connection_type, config);
-
     return NextResponse.json(result);
 
   } catch (error) {
-    console.error('Connection test error:', error);
     return NextResponse.json(
-      {
-        success: false,
-        error: error.message || 'Failed to test connection',
-      },
+      { success: false, error: error.message },
       { status: 500 }
     );
   }

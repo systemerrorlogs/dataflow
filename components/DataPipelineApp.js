@@ -2,6 +2,7 @@ import React, { useState, useMemo, createContext, useContext, useEffect } from '
 import { Home, Database, Search, FileText, Plus, RefreshCw, Menu, X, User, LogOut, CheckCircle, XCircle, Clock, PlayCircle, Settings, ChevronDown, BookOpen, HelpCircle } from 'lucide-react';
 import LogsModal from './LogsModal';
 import ExecutionHistoryModal from './ExecutionHistoryModal';
+import { getEnabledConnectors, getConnectorMetadata, isConnectorEnabled } from '@/lib/config/connectors';
 
 const TeamContext = createContext();
 
@@ -611,6 +612,11 @@ const ConnectionsPage = () => {
               <option value="postgresql">PostgreSQL</option>
               <option value="oracle">Oracle</option>
               <option value="mysql">MySQL</option>
+              <option value="sqlserver">SQL Server</option>
+              <option value="vertica">Vertica</option>
+              <option value="cockroachdb">CockroachDB</option>
+              <option value="salesforce">Salesforce</option>
+              <option value="servicenow">ServiceNow</option>
               <option value="csv">CSV</option>
               <option value="excel">Excel</option>
             </select>
@@ -1069,33 +1075,106 @@ const TasksPage = ({ setCurrentPage, setTaskFormData }) => {
   );
 };
 
-const TaskFormPage = ({ taskFormData, setCurrentPage }) => {
+const TaskFormPage = ({ taskFormData, setCurrentPage, editingTask }) => {
   const [connections, setConnections] = useState([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [sourceConnection, setSourceConnection] = useState('');
+  const [sourceConnection, setSourceConnection] = useState(taskFormData?.sourceConnection || '');
   const [targetConnection, setTargetConnection] = useState('');
-  const [sourceQuery, setSourceQuery] = useState('');
-  const [sourceWorksheet, setSourceWorksheet] = useState('');
+  const [sourceQuery, setSourceQuery] = useState(taskFormData?.sourceQuery || '');
+  const [sourceWorksheet, setSourceWorksheet] = useState(taskFormData?.worksheetName || '');
   const [targetTable, setTargetTable] = useState('');
   const [targetWorksheet, setTargetWorksheet] = useState('');
-  const [loadStrategy, setLoadStrategy] = useState('create_if_not_exists');
+  const [strategies, setStrategies] = useState(['check_exists', 'create_table', 'append_data']);
   const [loading, setLoading] = useState(false);
-  const [loadingTask, setLoadingTask] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
 
-  const isEditMode = taskFormData?.taskId;
+  // Available strategies with descriptions
+  const availableStrategies = [
+    {
+      value: 'check_exists',
+      label: 'Check Table Exists',
+      icon: '🔍',
+      description: 'Check if target table exists in database'
+    },
+    {
+      value: 'create_table',
+      label: 'Create Table',
+      icon: '🆕',
+      description: 'Create table based on source data schema'
+    },
+    {
+      value: 'drop_table',
+      label: 'Drop Table',
+      icon: '🗑️',
+      description: 'Drop existing table completely'
+    },
+    {
+      value: 'truncate_table',
+      label: 'Truncate Table',
+      icon: '🧹',
+      description: 'Delete all rows, keep table structure'
+    },
+    {
+      value: 'alter_add_columns',
+      label: 'Add Missing Columns',
+      icon: '➕',
+      description: 'Add new columns from source to target'
+    },
+    {
+      value: 'append_data',
+      label: 'Append Data',
+      icon: '📥',
+      description: 'Insert data into table'
+    },
+    {
+      value: 'upsert_data',
+      label: 'Upsert Data',
+      icon: '🔄',
+      description: 'Insert or update based on primary key'
+    }
+  ];
+
+  // Common strategy presets
+  const strategyPresets = [
+    {
+      name: 'Safe Default',
+      icon: '📋',
+      strategies: ['check_exists', 'create_table', 'append_data'],
+      description: 'Create table if needed, then load data'
+    },
+    {
+      name: 'Full Refresh',
+      icon: '🔄',
+      strategies: ['truncate_table', 'append_data'],
+      description: 'Empty table and load fresh data'
+    },
+    {
+      name: 'Rebuild',
+      icon: '🆕',
+      strategies: ['drop_table', 'create_table', 'append_data'],
+      description: 'Drop and recreate table from scratch'
+    },
+    {
+      name: 'Evolve & Refresh',
+      icon: '🔧',
+      strategies: ['check_exists', 'alter_add_columns', 'truncate_table', 'append_data'],
+      description: 'Add new columns, then refresh all data'
+    },
+    {
+      name: 'Incremental',
+      icon: '➕',
+      strategies: ['check_exists', 'create_table', 'alter_add_columns', 'append_data'],
+      description: 'Add columns and append new data'
+    }
+  ];
 
   useEffect(() => {
     loadConnections();
-    if (isEditMode) {
-      loadTask();
-    } else if (taskFormData?.sourceConnection) {
-      // Pre-fill from query tool
-      setSourceConnection(taskFormData.sourceConnection);
-      setSourceQuery(taskFormData.sourceQuery || '');
-      setSourceWorksheet(taskFormData.worksheetName || '');
+    if (editingTask) {
+      loadTaskData(editingTask);
     }
-  }, []);
+  }, [editingTask]);
 
   const loadConnections = async () => {
     try {
@@ -1106,26 +1185,33 @@ const TaskFormPage = ({ taskFormData, setCurrentPage }) => {
     }
   };
 
-  const loadTask = async () => {
+  const loadTaskData = async (taskId) => {
     try {
-      setLoadingTask(true);
-      const task = await api.tasks.get(taskFormData.taskId);
+      setLoading(true);
+      setIsEditMode(true);
+      const task = await api.tasks.get(taskId);
 
-      // Populate form fields with task data
       setName(task.name);
       setDescription(task.description || '');
       setSourceConnection(task.source_connection_id);
       setTargetConnection(task.target_connection_id);
-      setSourceQuery(task.source_query);
+      setSourceQuery(task.source_query || '');
       setSourceWorksheet(task.source_worksheet || '');
-      setTargetTable(task.target_table);
+      setTargetTable(task.target_table || '');
       setTargetWorksheet(task.target_worksheet || '');
-      setLoadStrategy(task.transformation_config?.load_strategy || 'create_if_not_exists');
+
+      // Parse loading strategies
+      if (task.loading_strategies) {
+        const parsedStrategies = typeof task.loading_strategies === 'string'
+          ? JSON.parse(task.loading_strategies)
+          : task.loading_strategies;
+        setStrategies(parsedStrategies);
+      }
     } catch (error) {
       console.error('Failed to load task:', error);
-      alert('Failed to load task');
+      alert('Failed to load task details');
     } finally {
-      setLoadingTask(false);
+      setLoading(false);
     }
   };
 
@@ -1137,172 +1223,134 @@ const TaskFormPage = ({ taskFormData, setCurrentPage }) => {
 
   const isSourceExcel = sourceConn?.connection_type === 'excel';
   const isTargetExcel = targetConn?.connection_type === 'excel';
-  const isTargetDatabase = targetConn && ['postgresql', 'mysql'].includes(targetConn.connection_type);
+  const isTargetDatabase = ['postgresql', 'mysql', 'oracle'].includes(targetConn?.connection_type);
 
-  // Improved handleSubmit for TaskForm component
-    // Replace your existing handleSubmit function with this one
+  const handleSubmit = async () => {
+    // Validation
+    if (!name || !sourceConnection || !targetConnection || !sourceQuery || !targetTable) {
+      alert('Please fill in all required fields');
+      return;
+    }
 
-    const handleSubmit = async () => {
-      // Validation
-      if (!name || !sourceConnection || !targetConnection || !sourceQuery || !targetTable) {
-        alert('Please fill in all required fields');
-        return;
+    if (isSourceExcel && !sourceWorksheet) {
+      alert('Worksheet name is required for Excel source connections');
+      return;
+    }
+
+    if (isTargetExcel && !targetWorksheet) {
+      alert('Worksheet name is required for Excel target connections');
+      return;
+    }
+
+    if (isTargetDatabase && strategies.length === 0) {
+      alert('Please select at least one loading strategy');
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      const taskData = {
+        name,
+        description,
+        source_connection_id: parseInt(sourceConnection),
+        target_connection_id: parseInt(targetConnection),
+        source_query: sourceQuery,
+        source_worksheet: sourceWorksheet || undefined,
+        target_table: targetTable,
+        target_worksheet: targetWorksheet || undefined,
+        loading_strategies: isTargetDatabase ? strategies : null
+      };
+
+      if (isEditMode) {
+        await api.tasks.update(editingTask, taskData);
+        alert('Task updated successfully!');
+      } else {
+        await api.tasks.create(taskData);
+        alert('Task created successfully!');
       }
 
-      if (isSourceExcel && !sourceWorksheet) {
-        alert('Worksheet name is required for Excel source connections');
-        return;
-      }
+      setCurrentPage('tasks');
+    } catch (error) {
+      console.error('Failed to save task:', error);
+      alert('Failed to save task: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      if (isTargetExcel && !targetWorksheet) {
-        alert('Worksheet name is required for Excel target connections');
-        return;
-      }
+  const removeStrategy = (index) => {
+    const newStrategies = strategies.filter((_, i) => i !== index);
+    setStrategies(newStrategies);
+  };
 
-      try {
-        setLoading(true);
+  const moveStrategy = (index, direction) => {
+    const newStrategies = [...strategies];
+    const swapIndex = direction === 'up' ? index - 1 : index + 1;
 
-        const taskData = {
-          name,
-          description: description || '',
-          source_connection_id: parseInt(sourceConnection),
-          target_connection_id: parseInt(targetConnection),
-          source_query: sourceQuery,
-          source_worksheet: sourceWorksheet || undefined,
-          target_table: targetTable,
-          target_worksheet: targetWorksheet || undefined,
-          transformation_config: {
-            load_strategy: loadStrategy
-          }
-        };
+    if (swapIndex >= 0 && swapIndex < newStrategies.length) {
+      [newStrategies[index], newStrategies[swapIndex]] =
+      [newStrategies[swapIndex], newStrategies[index]];
+      setStrategies(newStrategies);
+    }
+  };
 
-        console.log('Submitting task data:', taskData);
+  const addStrategy = (strategyValue) => {
+    if (strategyValue && !strategies.includes(strategyValue)) {
+      setStrategies([...strategies, strategyValue]);
+    }
+  };
 
-        let response;
-        if (isEditMode) {
-          response = await fetch(`/api/teams/${localStorage.getItem('currentTeamId')}/tasks/${taskFormData.taskId}`, {
-            method: 'PATCH',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(taskData),
-          });
-        } else {
-          response = await fetch(`/api/teams/${localStorage.getItem('currentTeamId')}/tasks`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(taskData),
-          });
-        }
-
-        console.log('Response status:', response.status);
-        console.log('Response headers:', Object.fromEntries(response.headers.entries()));
-
-        // Check if response is ok before parsing
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error('Error response text:', errorText);
-
-          try {
-            const errorJson = JSON.parse(errorText);
-            throw new Error(errorJson.error || `HTTP error! status: ${response.status}`);
-          } catch (parseError) {
-            throw new Error(`HTTP error! status: ${response.status}. Response: ${errorText}`);
-          }
-        }
-
-        // Get response text first to check if it's empty
-        const responseText = await response.text();
-        console.log('Response text:', responseText);
-
-        if (!responseText) {
-          throw new Error('Empty response from server');
-        }
-
-        // Try to parse as JSON
-        let result;
-        try {
-          result = JSON.parse(responseText);
-        } catch (parseError) {
-          console.error('Failed to parse response as JSON:', parseError);
-          console.error('Response text was:', responseText);
-          throw new Error('Invalid JSON response from server');
-        }
-
-        console.log('Task saved successfully:', result);
-        alert(isEditMode ? 'Task updated successfully!' : 'Task created successfully!');
-
-        // Reset form or navigate
-        if (!isEditMode) {
-          setName('');
-          setDescription('');
-          setSourceConnection('');
-          setTargetConnection('');
-          setSourceQuery('');
-          setSourceWorksheet('');
-          setTargetTable('');
-          setTargetWorksheet('');
-          setLoadStrategy('create_if_not_exists');
-        }
-
-        // Navigate back to tasks page
-        setCurrentPage('tasks');
-
-      } catch (error) {
-        console.error('Failed to save task:', error);
-        console.error('Error stack:', error.stack);
-        alert(`Failed to save task: ${error.message}`);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-
-  if (loadingTask) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-gray-600">Loading task...</div>
-      </div>
-    );
-  }
+  const applyPreset = (preset) => {
+    setStrategies([...preset.strategies]);
+  };
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">
-        {isEditMode ? 'Edit Task' : 'Create Task'}
-      </h1>
+    <div className="max-w-4xl mx-auto">
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h2 className="text-2xl font-bold text-gray-900 mb-6">
+          {isEditMode ? 'Edit Task' : 'Create New Task'}
+        </h2>
 
-      <div className="bg-white p-6 rounded-lg border border-gray-200 space-y-6">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Task Name *</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="My Data Pipeline Task"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-          />
+        {/* Basic Info */}
+        <div className="space-y-4 mb-6">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Task Name *
+            </label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="My Data Pipeline"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Description
+            </label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Optional description..."
+              rows={2}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            />
+          </div>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Optional description..."
-            rows={2}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-          />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="space-y-4 lg:border-r lg:border-gray-200 lg:pr-6">
-            <h3 className="font-semibold text-lg text-gray-900">Source</h3>
+        {/* Source & Target Configuration */}
+        <div className="grid grid-cols-2 gap-6 mb-6">
+          {/* Source Column */}
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold text-gray-900">Source</h3>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Connection *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Source Connection *
+              </label>
               <select
                 value={sourceConnection}
                 onChange={(e) => setSourceConnection(e.target.value)}
@@ -1319,7 +1367,9 @@ const TaskFormPage = ({ taskFormData, setCurrentPage }) => {
 
             {isSourceExcel && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Worksheet Name *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Worksheet Name *
+                </label>
                 <input
                   type="text"
                   value={sourceWorksheet}
@@ -1327,27 +1377,31 @@ const TaskFormPage = ({ taskFormData, setCurrentPage }) => {
                   placeholder="Sheet1"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 />
-                <p className="text-xs text-gray-500 mt-1">Required for Excel connections</p>
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Query / Path *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Source Query *
+              </label>
               <textarea
                 value={sourceQuery}
                 onChange={(e) => setSourceQuery(e.target.value)}
-                placeholder={isSourceExcel ? "/path/to/file.xlsx" : "SELECT * FROM table"}
-                rows={6}
+                placeholder="SELECT * FROM table"
+                rows={4}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
               />
             </div>
           </div>
 
+          {/* Target Column */}
           <div className="space-y-4">
-            <h3 className="font-semibold text-lg text-gray-900">Target</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Target</h3>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Connection *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Target Connection *
+              </label>
               <select
                 value={targetConnection}
                 onChange={(e) => setTargetConnection(e.target.value)}
@@ -1364,7 +1418,9 @@ const TaskFormPage = ({ taskFormData, setCurrentPage }) => {
 
             {isTargetExcel && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Worksheet Name *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Worksheet Name *
+                </label>
                 <input
                   type="text"
                   value={targetWorksheet}
@@ -1372,12 +1428,13 @@ const TaskFormPage = ({ taskFormData, setCurrentPage }) => {
                   placeholder="Sheet1"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 />
-                <p className="text-xs text-gray-500 mt-1">Required for Excel connections</p>
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Table / Path *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {isTargetExcel ? 'File Path *' : 'Target Table *'}
+              </label>
               <input
                 type="text"
                 value={targetTable}
@@ -1386,33 +1443,123 @@ const TaskFormPage = ({ taskFormData, setCurrentPage }) => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
               />
             </div>
-
-            {isTargetDatabase && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Load Strategy *</label>
-                <select
-                  value={loadStrategy}
-                  onChange={(e) => setLoadStrategy(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                >
-                  <option value="append">Append</option>
-                  <option value="create_if_not_exists">Create If Not Exists</option>
-                  <option value="drop_and_create">Drop and Recreate</option>
-                  <option value="truncate_and_load">Truncate and Load</option>
-                  <option value="auto_alter">Auto Alter Columns</option>
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  {loadStrategy === 'create_if_not_exists' && '✓ Table created automatically if needed'}
-                  {loadStrategy === 'drop_and_create' && '⚠ Table will be dropped and recreated'}
-                  {loadStrategy === 'truncate_and_load' && '⚠ All data will be deleted first'}
-                  {loadStrategy === 'auto_alter' && '✓ Missing columns added automatically'}
-                  {loadStrategy === 'append' && '✓ Data appended to existing table'}
-                </p>
-              </div>
-            )}
           </div>
         </div>
 
+        {/* Loading Strategy Pipeline - Only for database targets */}
+        {isTargetDatabase && (
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">
+              Loading Strategy Pipeline
+            </h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Select and order the strategies that will execute when this task runs
+            </p>
+
+            {/* Strategy Presets */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Quick Presets:
+              </label>
+              <div className="flex gap-2 flex-wrap">
+                {strategyPresets.map((preset, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => applyPreset(preset)}
+                    className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    title={preset.description}
+                  >
+                    <span className="mr-1">{preset.icon}</span>
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Current Pipeline */}
+            <div className="space-y-2 mb-3">
+              {strategies.length === 0 ? (
+                <div className="text-center py-6 text-gray-500">
+                  No strategies selected. Add strategies below.
+                </div>
+              ) : (
+                strategies.map((strategy, index) => {
+                  const strategyInfo = availableStrategies.find(s => s.value === strategy);
+                  return (
+                    <div
+                      key={index}
+                      className="flex items-center gap-2 p-3 bg-white rounded-lg border border-gray-200 hover:border-blue-300 transition-colors"
+                    >
+                      <span className="text-xl flex-shrink-0">{strategyInfo?.icon}</span>
+                      <div className="flex-1">
+                        <div className="font-medium text-sm">
+                          {index + 1}. {strategyInfo?.label}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {strategyInfo?.description}
+                        </div>
+                      </div>
+                      <div className="flex gap-1">
+                        {index > 0 && (
+                          <button
+                            onClick={() => moveStrategy(index, 'up')}
+                            className="p-1 text-gray-600 hover:text-gray-900"
+                            title="Move up"
+                          >
+                            ↑
+                          </button>
+                        )}
+                        {index < strategies.length - 1 && (
+                          <button
+                            onClick={() => moveStrategy(index, 'down')}
+                            className="p-1 text-gray-600 hover:text-gray-900"
+                            title="Move down"
+                          >
+                            ↓
+                          </button>
+                        )}
+                        <button
+                          onClick={() => removeStrategy(index)}
+                          className="p-1 text-red-600 hover:text-red-800"
+                          title="Remove"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Add Strategy Dropdown */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Add Strategy:
+              </label>
+              <select
+                onChange={(e) => {
+                  addStrategy(e.target.value);
+                  e.target.value = '';
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              >
+                <option value="">+ Select strategy to add...</option>
+                {availableStrategies.map(s => (
+                  <option
+                    key={s.value}
+                    value={s.value}
+                    disabled={strategies.includes(s.value)}
+                  >
+                    {s.icon} {s.label} - {s.description}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {/* Action Buttons */}
         <div className="flex gap-2 pt-4 border-t border-gray-200">
           <button
             onClick={handleSubmit}
@@ -1432,6 +1579,7 @@ const TaskFormPage = ({ taskFormData, setCurrentPage }) => {
     </div>
   );
 };
+
 
 const DocumentationPage = () => {
   const [activeSection, setActiveSection] = useState('overview');
