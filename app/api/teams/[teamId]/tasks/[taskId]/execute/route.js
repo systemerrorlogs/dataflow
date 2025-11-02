@@ -15,9 +15,7 @@ import { isConnectorEnabled } from '@/lib/config/connectors';
 export async function POST(request, { params }) {
   try {
     const { teamId, taskId } = params;
-    
-    console.log('Executing task:', taskId);
-    
+
     // 1. Create execution record
     const executionResult = await query(
       `INSERT INTO task_executions (task_id, status, started_at) 
@@ -27,8 +25,7 @@ export async function POST(request, { params }) {
     );
     
     const executionId = executionResult.rows[0].id;
-    console.log('Created execution with ID:', executionId);
-    
+
     // 2. Start async task execution
     executeTaskAsync(taskId, executionId, teamId).catch(err => {
       console.error('Task execution error:', err);

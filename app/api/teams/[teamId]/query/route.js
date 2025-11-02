@@ -18,6 +18,16 @@ async function executeQuery(connection, queryText, worksheetName) {
       return await executeOracleQuery(config, queryText);
     case 'mysql':
       return await executeMySQLQuery(config, queryText);
+    case 'sqlserver':
+      return await executeSQLServerQuery(config, queryText);
+    case 'vertica':
+      return await executeVerticaQuery(config, queryText);
+    case 'cockroachdb':
+      return await executeCockroachDBQuery(config, queryText);
+    case 'salesforce':
+      return await executeSalesforceQuery(config, queryText);
+    case 'servicenow':
+      return await executeServiceNowQuery(config, queryText);
     case 'excel':
       return await executeExcelQuery(config, worksheetName);
     case 'csv':
@@ -138,6 +148,226 @@ async function executeMySQLQuery(config, queryText) {
         code: error.code,
         errno: error.errno,
         sqlState: error.sqlState,
+      }
+    };
+  }
+}
+
+// SQL Server query execution
+async function executeSQLServerQuery(config, queryText) {
+  try {
+    const sql = require('mssql');
+
+    const sqlConfig = {
+      user: config.username,
+      password: config.password,
+      server: config.host,
+      port: config.port || 1433,
+      database: config.database,
+      options: {
+        encrypt: config.encrypt !== false,
+        trustServerCertificate: config.trustServerCertificate !== false,
+      },
+    };
+
+    const startTime = Date.now();
+    const pool = await sql.connect(sqlConfig);
+    const result = await pool.request().query(queryText);
+    const executionTime = Date.now() - startTime;
+
+    await pool.close();
+
+    return {
+      success: true,
+      columns: result.recordset.columns ? Object.keys(result.recordset.columns) : [],
+      rows: result.recordset,
+      rowCount: result.recordset.length,
+      executionTime,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      details: {
+        number: error.number,
+        state: error.state,
+        class: error.class,
+      }
+    };
+  }
+}
+
+// Vertica query execution
+async function executeVerticaQuery(config, queryText) {
+  try {
+    const vertica = require('vertica');
+
+    const connection = vertica.connect({
+      host: config.host,
+      port: config.port || 5433,
+      database: config.database,
+      user: config.username,
+      password: config.password,
+    });
+
+    const startTime = Date.now();
+    const result = await new Promise((resolve, reject) => {
+      connection.query(queryText, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+    const executionTime = Date.now() - startTime;
+
+    connection.disconnect();
+
+    return {
+      success: true,
+      columns: result.length > 0 ? Object.keys(result[0]) : [],
+      rows: result,
+      rowCount: result.length,
+      executionTime,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+}
+
+// CockroachDB query execution (uses PostgreSQL driver)
+async function executeCockroachDBQuery(config, queryText) {
+  const pool = new Pool({
+    host: config.host,
+    port: config.port || 26257,
+    database: config.database,
+    user: config.username,
+    password: config.password,
+    ssl: config.ssl !== false ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 10000,
+  });
+
+  try {
+    const startTime = Date.now();
+    const result = await pool.query(queryText);
+    const executionTime = Date.now() - startTime;
+
+    return {
+      success: true,
+      columns: result.fields.map(f => f.name),
+      rows: result.rows,
+      rowCount: result.rowCount,
+      executionTime,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      details: {
+        code: error.code,
+        position: error.position,
+        hint: error.hint,
+      }
+    };
+  } finally {
+    await pool.end();
+  }
+}
+
+// Salesforce query execution
+async function executeSalesforceQuery(config, queryText) {
+  try {
+    const jsforce = require('jsforce');
+
+    const conn = new jsforce.Connection({
+      loginUrl: config.loginUrl || 'https://login.salesforce.com',
+    });
+
+    await conn.login(config.username, config.password);
+
+    const startTime = Date.now();
+    const result = await conn.query(queryText);
+    const executionTime = Date.now() - startTime;
+
+    // Extract column names from first record
+    const columns = result.records.length > 0 ? Object.keys(result.records[0]).filter(k => k !== 'attributes') : [];
+
+    // Clean up records (remove attributes property)
+    const cleanRecords = result.records.map(record => {
+      const { attributes, ...cleanRecord } = record;
+      return cleanRecord;
+    });
+
+    return {
+      success: true,
+      columns: columns,
+      rows: cleanRecords,
+      rowCount: result.totalSize,
+      executionTime,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      details: {
+        errorCode: error.errorCode,
+        name: error.name,
+      }
+    };
+  }
+}
+
+// ServiceNow query execution
+async function executeServiceNowQuery(config, queryText) {
+  try {
+    const axios = require('axios');
+
+    // Parse the query to extract table name and query parameters
+    // Expected format: "table:incident" or "table:incident?sysparm_query=active=true"
+    const match = queryText.match(/table:(\w+)(\?.*)?/);
+
+    if (!match) {
+      return {
+        success: false,
+        error: 'Invalid ServiceNow query format. Use: table:tablename or table:tablename?sysparm_query=...',
+      };
+    }
+
+    const tableName = match[1];
+    const queryParams = match[2] || '';
+
+    const url = `https://${config.instance}.service-now.com/api/now/table/${tableName}${queryParams}`;
+
+    const startTime = Date.now();
+    const response = await axios.get(url, {
+      auth: {
+        username: config.username,
+        password: config.password,
+      },
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+    const executionTime = Date.now() - startTime;
+
+    const records = response.data.result || [];
+    const columns = records.length > 0 ? Object.keys(records[0]) : [];
+
+    return {
+      success: true,
+      columns: columns,
+      rows: records,
+      rowCount: records.length,
+      executionTime,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message,
+      details: {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
       }
     };
   }
@@ -286,9 +516,9 @@ export async function POST(req, { params }) {
     const connection = connectionResult.rows[0];
 
     // For database connections, query_text is required
-    if (['postgresql', 'oracle', 'mysql'].includes(connection.connection_type) && !query_text) {
+    if (['postgresql', 'oracle', 'mysql', 'sqlserver', 'vertica', 'cockroachdb', 'salesforce', 'servicenow'].includes(connection.connection_type) && !query_text) {
       return NextResponse.json(
-        { success: false, error: 'query_text is required for database connections' },
+        { success: false, error: 'query_text is required for this connection type' },
         { status: 400 }
       );
     }

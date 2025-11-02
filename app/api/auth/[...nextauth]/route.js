@@ -17,8 +17,6 @@ export const authOptions = {
             throw new Error('Please enter email and password');
           }
 
-          console.log('🔍 Login attempt for:', credentials.email);
-
           try {
             const result = await query(
               'SELECT * FROM users WHERE email = $1',
@@ -26,17 +24,13 @@ export const authOptions = {
             );
 
             if (result.rows.length === 0) {
-              console.log('❌ No user found');
               throw new Error('Invalid email or password');
             }
 
             const user = result.rows[0];
-            console.log('✅ User found:', user.email);
-            console.log('🔑 Has password_hash:', !!user.password_hash);
 
             // Check if password_hash exists
             if (!user.password_hash) {
-              console.log('❌ No password hash in database');
               throw new Error('Account not properly configured. Please contact administrator.');
             }
 
@@ -46,18 +40,16 @@ export const authOptions = {
               user.password_hash
             );
 
-            console.log('🔐 Password valid:', isValid);
 
             if (!isValid) {
               throw new Error('Invalid email or password');
             }
 
-            console.log('✅ Login successful');
-
             return {
               id: user.id.toString(),
               email: user.email,
-              name: user.name
+              name: user.name,
+              is_admin: user.is_admin
             };
           } catch (error) {
             console.error('❌ Auth error:', error);
@@ -76,6 +68,7 @@ export const authOptions = {
         token.id = user.id;
         token.email = user.email;
         token.name = user.name;
+        token.is_admin = user.is_admin;
       }
       return token;
     },
@@ -84,6 +77,7 @@ export const authOptions = {
         session.user.id = token.id;
         session.user.email = token.email;
         session.user.name = token.name;
+        session.user.is_admin = token.is_admin;
       }
       return session;
     }

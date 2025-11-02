@@ -5,17 +5,12 @@ export async function POST(request, { params }) {
   try {
     const { id: taskId } = params;
 
-    console.log('=== EXECUTING TASK ===');
-    console.log('Task ID:', taskId);
-
-    // Validate task exists
-    const taskCheck = await query(
+       const taskCheck = await query(
       'SELECT id, name FROM tasks WHERE id = $1',
       [taskId]
     );
 
     if (taskCheck.rows.length === 0) {
-      console.log('Task not found');
       return NextResponse.json(
         { error: 'Task not found' },
         { status: 404 }
@@ -23,8 +18,7 @@ export async function POST(request, { params }) {
     }
 
     const task = taskCheck.rows[0];
-    console.log('Task found:', task.name);
-
+\
     // Create execution record
     const executionResult = await query(
       `INSERT INTO task_executions (task_id, status, started_at)
@@ -33,9 +27,7 @@ export async function POST(request, { params }) {
       [taskId, 'running']
     );
 
-    console.log(executionResult.rows[0]);
     const executionId = executionResult.rows[0].id;
-    console.log('Created execution ID:', executionId);
 
     // Start async task execution (don't wait for it)
     executeTaskAsync(taskId, executionId, task.name).catch(err => {
@@ -47,8 +39,6 @@ export async function POST(request, { params }) {
       success: true,
       execution_id: executionId
     };
-
-    console.log('Returning:', response);
 
     return NextResponse.json(response);
 
@@ -71,7 +61,6 @@ async function executeTaskAsync(taskId, executionId, taskName) {
          VALUES ($1, $2, $3, NOW())`,
         [executionId, level, message]
       );
-      console.log(`[Execution ${executionId}] [${level.toUpperCase()}] ${message}`);
     } catch (err) {
       console.error('Failed to write log:', err);
     }
@@ -139,7 +128,6 @@ async function executeTaskAsync(taskId, executionId, taskName) {
     );
 
     await writeLog('success', 'Task execution completed successfully');
-    console.log(`Execution ${executionId} completed successfully`);
 
   } catch (error) {
     console.error('Task execution failed:', error);
@@ -155,6 +143,5 @@ async function executeTaskAsync(taskId, executionId, taskName) {
       ['failed', error.message, executionId]
     );
 
-    console.log(`Execution ${executionId} failed`);
   }
 }

@@ -15,6 +15,24 @@ export async function GET(req, { params }) {
   try {
     const { teamId } = params;
 
+    if (!teamId || teamId === 'null' || teamId === 'undefined') {
+      return NextResponse.json(
+        { error: 'Invalid team ID' },
+        { status: 400 }
+      );
+    }
+
+    // Convert to integer and validate
+    const teamIdInt = parseInt(teamId, 10);
+    if (isNaN(teamIdInt)) {
+      return NextResponse.json(
+        { error: 'Team ID must be a valid number' },
+        { status: 400 }
+      );
+    }
+
+
+
     const result = await query(`
       SELECT 
         t.id, t.name, t.description, t.source_connection_id, t.target_connection_id,
@@ -100,16 +118,6 @@ export async function POST(req, { params }) {
       ? (typeof transformation_config === 'string' ? transformation_config : JSON.stringify(transformation_config))
       : null;
 
-    console.log('Creating task with:', {
-      teamId,
-      name,
-      source_connection_id,
-      target_connection_id,
-      source_query: source_query.substring(0, 50) + '...',
-      target_table,
-      transformation_config: transformConfigJson
-    });
-
     const result = await query(
       `INSERT INTO tasks (
         team_id, name, description, source_connection_id, target_connection_id, 
@@ -132,8 +140,6 @@ export async function POST(req, { params }) {
         session.user.id
       ]
     );
-
-    console.log('Task created successfully:', result.rows[0].id);
 
     return NextResponse.json(result.rows[0], { status: 201 });
     

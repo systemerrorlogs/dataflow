@@ -1,28 +1,41 @@
+'use client';
 import React, { useState, useMemo, createContext, useContext, useEffect } from 'react';
-import { Home, Database, Search, FileText, Plus, RefreshCw, Menu, X, User, LogOut, CheckCircle, XCircle, Clock, PlayCircle, Settings, ChevronDown, BookOpen, HelpCircle } from 'lucide-react';
+import { Home, Database, Search, FileText, Plus, RefreshCw, Menu, X, User, Users, LogOut, CheckCircle, XCircle, Clock, PlayCircle, Settings, ChevronDown, BookOpen, HelpCircle } from 'lucide-react';
 import LogsModal from './LogsModal';
 import ExecutionHistoryModal from './ExecutionHistoryModal';
+import { useSession } from 'next-auth/react';
 import { getEnabledConnectors, getConnectorMetadata, isConnectorEnabled } from '@/lib/config/connectors';
 
 const TeamContext = createContext();
 
 const api = {
   async call(endpoint, options = {}) {
-    const teamId = localStorage.getItem('currentTeamId');
-    const res = await fetch(`/api/teams/${teamId}${endpoint}`, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
+      const teamId = localStorage.getItem('currentTeamId');
 
-    if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.error || 'API call failed');
-    }
-    return res.json();
-  },
+      // ✅ CRITICAL FIX: Validate teamId before making API call
+      if (!teamId || teamId === 'null' || teamId === 'undefined') {
+        throw new Error('No team selected. Please select a team first.');
+      }
+
+      const teamIdInt = parseInt(teamId, 10);
+      if (isNaN(teamIdInt)) {
+        throw new Error('Invalid team ID');
+      }
+
+      const res = await fetch(`/api/teams/${teamIdInt}${endpoint}`, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers,
+        },
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'API call failed');
+      }
+      return res.json();
+    },
 
   teams: {
     list: () => fetch('/api/teams').then(r => r.json()),
@@ -55,15 +68,18 @@ const api = {
 };
 
 const Sidebar = ({ currentPage, setCurrentPage, sidebarOpen, setSidebarOpen }) => {
-  const { currentTeam } = useContext(TeamContext);
+  const { currentTeam, currentUser } = useContext(TeamContext);
+
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Home },
     { id: 'connections', label: 'Connections', icon: Database },
     { id: 'query', label: 'Data Explorer', icon: Search },
     { id: 'tasks', label: 'Tasks', icon: FileText },
-    { id: 'documentation', label: 'Documentation', icon: BookOpen }
+    { id: 'documentation', label: 'Documentation', icon: BookOpen },
+    ...(currentUser?.is_admin ? [{ id: 'admin', label: 'Admin', icon: Settings }] : [])
   ];
+
 
   return (
     <>
@@ -209,6 +225,7 @@ const TopBar = ({ setSidebarOpen, userTeams, currentUser }) => {
 };
 
 const DashboardPage = () => {
+  const { currentTeam } = useContext(TeamContext); // ✅ Get currentTeam from context
   const [stats, setStats] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -220,9 +237,12 @@ const DashboardPage = () => {
   });
   const [monitoringExecution, setMonitoringExecution] = useState(null);
 
+  // ✅ Load dashboard when currentTeam changes
   useEffect(() => {
-    loadDashboard();
-  }, []);
+    if (currentTeam) {
+      loadDashboard();
+    }
+  }, [currentTeam]); // Re-run when team changes
 
   const loadDashboard = async () => {
     try {
@@ -239,6 +259,7 @@ const DashboardPage = () => {
       setLoading(false);
     }
   };
+
 
   const handleViewLogs = (task) => {
     setHistoryModal({
@@ -434,7 +455,8 @@ const ConnectionsPage = () => {
     connection_type: 'database',
     can_be_source: true,
     can_be_target: true,
-    config: {}
+    config: {},
+    configPassword: ''
   });
 
   useEffect(() => {
@@ -454,16 +476,22 @@ const ConnectionsPage = () => {
   };
 
   const handleEdit = (connection) => {
-    setEditingConnection(connection);
-    setFormData({
-      name: connection.name,
-      connection_type: connection.connection_type,
-      can_be_source: connection.can_be_source,
-      can_be_target: connection.can_be_target,
-      config: connection.config || {}
-    });
-    setShowForm(true);
-  };
+      // Remove password from config before showing in form
+      const configWithoutPassword = { ...connection.config };
+      const configPassword = configWithoutPassword.password;
+      delete configWithoutPassword.password;
+
+      setFormData({
+        name: connection.name,
+        connection_type: connection.connection_type,
+        config: configWithoutPassword,  // Config WITHOUT password
+        can_be_source: connection.can_be_source,
+        can_be_target: connection.can_be_target,
+        configPassword: configPassword
+      });
+      setEditingConnection(connection);
+      setShowForm(true);
+    };
 
   const handleDelete = async (id) => {
     if (!window.confirm('Are you sure you want to delete this connection?')) return;
@@ -478,27 +506,45 @@ const ConnectionsPage = () => {
   };
 
   const handleSubmit = async () => {
-    try {
-      if (editingConnection) {
-        await api.connections.update(editingConnection.id, formData);
-      } else {
-        await api.connections.create(formData);
-      }
-      setShowForm(false);
-      setEditingConnection(null);
-      setFormData({
-        name: '',
-        connection_type: 'database',
-        can_be_source: true,
-        can_be_target: true,
-        config: {}
-      });
-      await loadConnections();
-    } catch (error) {
-      console.error('Failed to save connection:', error);
-      alert('Failed to save connection');
+  try {
+    // Merge password into config if provided
+    const finalConfig = { ...formData.config };
+    if (formData.configPassword) {
+      finalConfig.password = formData.configPassword;
     }
-  };
+
+    const payload = {
+      name: formData.name,
+      connection_type: formData.connection_type,
+      config: finalConfig,
+      can_be_source: formData.can_be_source,
+      can_be_target: formData.can_be_target
+    };
+
+    if (editingConnection) {
+      // Update existing connection - use api.connections.update
+      await api.connections.update(editingConnection.id, payload);
+    } else {
+      // Create new connection - use api.connections.create
+      await api.connections.create(payload);
+    }
+
+    loadConnections();
+    setShowForm(false);
+    setEditingConnection(null);
+    setFormData({
+      name: '',
+      connection_type: 'database',
+      config: {},
+      can_be_source: true,
+      can_be_target: false,
+      configPassword: ''
+    });
+  } catch (error) {
+    console.error('Failed to save connection:', error);
+    alert('Failed to save connection');
+  }
+};
 
   const handleTestConnection = async (id) => {
     try {
@@ -518,47 +564,52 @@ const ConnectionsPage = () => {
   };
 
   const handleTestConnectionInForm = async () => {
-      // Validate required fields
-      if (!formData.name.trim()) {
-        alert('Please enter a connection name');
-        return;
-      }
+  // Validate required fields
+  if (!formData.name.trim()) {
+    alert('Please enter a connection name');
+    return;
+  }
 
-      if (Object.keys(formData.config).length === 0) {
-        alert('Please enter connection configuration');
-        return;
-      }
+  if (Object.keys(formData.config).length === 0) {
+    alert('Please enter connection configuration');
+    return;
+  }
 
-      try {
-        setTestingInForm(true);
+  try {
+    setTestingInForm(true);
 
-        // Get current team ID from context or localStorage
-        const currentTeamId = localStorage.getItem('currentTeamId');
+    const currentTeamId = localStorage.getItem('currentTeamId');
 
-        // Test the connection using the current form data
-        const result = await fetch(`/api/teams/${currentTeamId}/connections/test`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            connection_type: formData.connection_type,
-            config: formData.config
-          })
-        });
+    // ✅ Merge password into config for testing
+    const configForTest = { ...formData.config };
+    if (formData.configPassword) {
+      configForTest.password = formData.configPassword;
+    }
 
-        const data = await result.json();
+    // Test the connection using the merged config
+    const result = await fetch(`/api/teams/${currentTeamId}/connections/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        connection_type: formData.connection_type,
+        config: configForTest  // ✅ Now includes password
+      })
+    });
 
-        if (data.success) {
-          alert('✓ Connection test successful!\n\n' + data.message);
-        } else {
-          alert('✗ Connection test failed:\n\n' + (data.error || 'Unknown error'));
-        }
-      } catch (error) {
-        console.error('Failed to test connection:', error);
-        alert('✗ Connection test failed:\n\n' + error.message);
-      } finally {
-        setTestingInForm(false);
-      }
-    };
+    const data = await result.json();
+
+    if (data.success) {
+      alert('✓ Connection test successful!\n\n' + data.message);
+    } else {
+      alert('✗ Connection test failed:\n\n' + (data.error || 'Unknown error'));
+    }
+  } catch (error) {
+    console.error('Failed to test connection:', error);
+    alert('✗ Connection test failed:\n\n' + error.message);
+  } finally {
+    setTestingInForm(false);
+  }
+};
 
   if (loading) {
     return (
@@ -647,6 +698,26 @@ const ConnectionsPage = () => {
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Configuration (JSON)
             </label>
+            {/* Password Field - Add this entire block ABOVE the Configuration JSON textarea */}
+            {(formData.connection_type !== 'csv') && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Password
+                  <span className="text-xs text-gray-500 ml-2">(This will be encrypted when saved)</span>
+                </label>
+                <input
+                  type="password"
+                  value={formData.configPassword}
+                  onChange={(e) => setFormData({ ...formData, configPassword: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  placeholder="Enter password"
+                  autoComplete="new-password"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Enter the password for this connection. It will not be visible in the configuration below.
+                </p>
+              </div>
+            )}
             <textarea
               value={JSON.stringify(formData.config, null, 2)}
               onChange={(e) => {
@@ -981,7 +1052,6 @@ const TasksPage = ({ setCurrentPage, setTaskFormData }) => {
   };
 
   const handleEditTask = (taskId) => {
-      console.log('Editing task:', taskId);
       setTaskFormData({ taskId: taskId });
       setCurrentPage('task-form');
     };
@@ -1580,41 +1650,879 @@ const TaskFormPage = ({ taskFormData, setCurrentPage, editingTask }) => {
 };
 
 
+// Complete DocumentationPage Component
+// Replace your existing DocumentationPage in DataPipelineApp.js with this
+
 const DocumentationPage = () => {
   const [activeSection, setActiveSection] = useState('overview');
 
   const sections = [
     { id: 'overview', title: 'Overview', icon: BookOpen },
-    { id: 'getting-started', title: 'Getting Started', icon: PlayCircle }
+    { id: 'getting-started', title: 'Getting Started', icon: PlayCircle },
+    { id: 'connections', title: 'Managing Connections', icon: Database },
+    { id: 'query-tool', title: 'Query Tool', icon: Search },
+    { id: 'tasks', title: 'Creating Tasks', icon: FileText },
+    { id: 'execution-logs', title: 'Viewing Execution Logs', icon: FileText },
+    { id: 'troubleshooting', title: 'Troubleshooting', icon: XCircle },
+    { id: 'teams', title: 'Team Management', icon: User },
+    { id: 'faq', title: 'FAQ', icon: HelpCircle }
   ];
 
   const renderContent = () => {
-    if (activeSection === 'overview') {
-      return (
-        <div className="space-y-4">
-          <h2 className="text-2xl font-bold text-gray-900">Overview</h2>
-          <p className="text-gray-700">
-            DataFlow is an enterprise data pipeline management platform that enables you to easily move data between different systems, databases, and file formats.
-          </p>
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h3 className="font-semibold text-blue-900 mb-2">Key Features</h3>
-            <ul className="list-disc list-inside space-y-1 text-blue-800">
-              <li>Multi-tenant team-based access control</li>
-              <li>Support for multiple data sources and targets</li>
-              <li>Visual query tool for testing data sources</li>
-              <li>Automated task scheduling and execution</li>
-            </ul>
-          </div>
-        </div>
-      );
-    }
+    switch (activeSection) {
+      case 'overview':
+        return (
+          <div className="space-y-6">
+            <h2 className="text-3xl font-bold text-gray-900">Welcome to DataFlow</h2>
 
-    return (
-      <div className="space-y-4">
-        <h2 className="text-2xl font-bold text-gray-900">Getting Started</h2>
-        <p className="text-gray-700">Follow these steps to begin using DataFlow.</p>
-      </div>
-    );
+            <div className="bg-blue-50 border-l-4 border-blue-500 p-4">
+              <p className="text-blue-900 font-medium">
+                DataFlow is a powerful data pipeline management platform that helps you move data between systems quickly and reliably.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-xl font-semibold text-gray-900">What Can You Do?</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Database className="w-5 h-5 text-blue-600" />
+                    <h4 className="font-semibold text-gray-900">Connect to Data Sources</h4>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Set up connections to databases (PostgreSQL, Oracle, MySQL), file systems (SFTP), and files (Excel, CSV).
+                  </p>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Search className="w-5 h-5 text-green-600" />
+                    <h4 className="font-semibold text-gray-900">Test & Explore Data</h4>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Use the Query Tool to run SQL queries, preview data, and verify connections before creating tasks.
+                  </p>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <FileText className="w-5 h-5 text-purple-600" />
+                    <h4 className="font-semibold text-gray-900">Create Data Tasks</h4>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Build tasks that automatically move data from source to target on a schedule or on-demand.
+                  </p>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <CheckCircle className="w-5 h-5 text-teal-600" />
+                    <h4 className="font-semibold text-gray-900">Monitor Executions</h4>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Track task runs in real-time, view logs, review execution history, and troubleshoot issues.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-xl font-semibold text-gray-900">Key Features</h3>
+              <ul className="space-y-2">
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                  <span className="text-gray-700"><strong>Multiple Data Sources:</strong> PostgreSQL, Oracle, MySQL, SFTP, Excel, CSV</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                  <span className="text-gray-700"><strong>Real-Time Monitoring:</strong> View live logs as tasks execute</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                  <span className="text-gray-700"><strong>Execution History:</strong> Review past runs, check status, and debug failures</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                  <span className="text-gray-700"><strong>Team Collaboration:</strong> Share connections and tasks within your team</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                  <span className="text-gray-700"><strong>Scheduled Tasks:</strong> Run data pipelines automatically on a schedule</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        );
+
+      case 'getting-started':
+        return (
+          <div className="space-y-6">
+            <h2 className="text-3xl font-bold text-gray-900">Getting Started</h2>
+
+            <p className="text-lg text-gray-700">
+              Follow these steps to create your first data pipeline in DataFlow.
+            </p>
+
+            <div className="border-l-4 border-blue-500 pl-4 py-2">
+              <h3 className="text-xl font-semibold text-gray-900 mb-3">Step 1: Create Connections</h3>
+              <p className="text-gray-700 mb-3">
+                Before moving data, you need to set up connections to your data sources and targets.
+              </p>
+
+              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                <p className="font-medium text-gray-900">To create a connection:</p>
+                <ol className="list-decimal list-inside space-y-2 text-gray-700 ml-4">
+                  <li>Click <strong>Connections</strong> in the sidebar</li>
+                  <li>Click the <strong>+ Add Connection</strong> button</li>
+                  <li>Fill in the connection details</li>
+                  <li>Click <strong>Test Connection</strong> to verify it works</li>
+                  <li>Click <strong>Save</strong> once the test passes</li>
+                </ol>
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-3">
+                <p className="text-sm text-yellow-800">
+                  <strong>💡 Tip:</strong> Create at least TWO connections - one source and one target - before creating tasks.
+                </p>
+              </div>
+            </div>
+
+            <div className="border-l-4 border-green-500 pl-4 py-2">
+              <h3 className="text-xl font-semibold text-gray-900 mb-3">Step 2: Test Your Connection</h3>
+              <p className="text-gray-700 mb-3">
+                Use the Query Tool to verify your connection and explore your data.
+              </p>
+
+              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                <p className="font-medium text-gray-900">To test a connection:</p>
+                <ol className="list-decimal list-inside space-y-2 text-gray-700 ml-4">
+                  <li>Click <strong>Query Tool</strong> in the sidebar</li>
+                  <li>Select a connection from the dropdown</li>
+                  <li>Enter a test query</li>
+                  <li>Click <strong>Execute Query</strong></li>
+                  <li>Review the results in the table below</li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="border-l-4 border-purple-500 pl-4 py-2">
+              <h3 className="text-xl font-semibold text-gray-900 mb-3">Step 3: Create Your First Task</h3>
+              <p className="text-gray-700 mb-3">
+                Now that your connections are ready, create a task to move data.
+              </p>
+
+              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                <p className="font-medium text-gray-900">To create a task:</p>
+                <ol className="list-decimal list-inside space-y-2 text-gray-700 ml-4">
+                  <li>Click <strong>Tasks</strong> in the sidebar</li>
+                  <li>Click <strong>+ Create Task</strong></li>
+                  <li>Fill in the task details</li>
+                  <li>Enable <strong>"Capture Logs"</strong> to track execution history</li>
+                  <li>Click <strong>Create Task</strong></li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="border-l-4 border-teal-500 pl-4 py-2">
+              <h3 className="text-xl font-semibold text-gray-900 mb-3">Step 4: Run and Monitor Your Task</h3>
+              <p className="text-gray-700 mb-3">
+                Execute your task and watch it in real-time.
+              </p>
+
+              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                <p className="font-medium text-gray-900">To run a task:</p>
+                <ol className="list-decimal list-inside space-y-2 text-gray-700 ml-4">
+                  <li>Find your task in the <strong>Tasks</strong> page</li>
+                  <li>Click the <strong>▶ Run</strong> button</li>
+                  <li>A logs modal will open automatically showing real-time logs</li>
+                  <li>Watch the logs update as the task executes</li>
+                  <li>The modal will show final status when complete</li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="border-l-4 border-orange-500 pl-4 py-2">
+              <h3 className="text-xl font-semibold text-gray-900 mb-3">Step 5: Review Execution History</h3>
+              <p className="text-gray-700 mb-3">
+                Check past runs and troubleshoot any issues.
+              </p>
+
+              <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                <p className="font-medium text-gray-900">To view execution history:</p>
+                <ol className="list-decimal list-inside space-y-2 text-gray-700 ml-4">
+                  <li>Go to the <strong>Dashboard</strong></li>
+                  <li>Find the task in your recent executions</li>
+                  <li>Click the <strong>Logs</strong> button on any task card</li>
+                  <li>View all past executions</li>
+                  <li>Click <strong>View Logs</strong> on any execution to see its detailed logs</li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="bg-blue-100 border border-blue-300 rounded-lg p-4 mt-6">
+              <h3 className="font-semibold text-blue-900 mb-2">🎉 You're All Set!</h3>
+              <p className="text-blue-900 text-sm">
+                You've now created your first data pipeline! Continue exploring the other features or check out the FAQ section for common questions.
+              </p>
+            </div>
+          </div>
+        );
+
+      case 'execution-logs':
+        return (
+          <div className="space-y-6">
+            <h2 className="text-3xl font-bold text-gray-900">Viewing Execution Logs</h2>
+
+            <p className="text-gray-700">
+              DataFlow provides comprehensive logging and monitoring for all task executions.
+            </p>
+
+            <div className="space-y-4">
+              <h3 className="text-xl font-semibold text-gray-900">Real-Time Logs</h3>
+
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="font-medium text-gray-900 mb-3">When you click "Run" on a task:</p>
+                <ol className="list-decimal list-inside space-y-2 text-gray-700 ml-4">
+                  <li>A logs modal opens automatically</li>
+                  <li>You'll see "Running..." status at the top</li>
+                  <li>Logs appear in real-time as the task executes</li>
+                  <li>The view auto-scrolls to show the latest logs</li>
+                  <li>When complete, you'll see final status</li>
+                </ol>
+              </div>
+
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h4 className="font-semibold text-gray-900 mb-2">Log Colors Explained</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                    <span className="text-sm"><strong>Red:</strong> Error messages</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                    <span className="text-sm"><strong>Yellow:</strong> Warning messages</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                    <span className="text-sm"><strong>Blue:</strong> Info messages</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                    <span className="text-sm"><strong>Green:</strong> Success messages</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-xl font-semibold text-gray-900">Historical Logs</h3>
+
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="font-medium text-gray-900 mb-3">To view logs from previous runs:</p>
+                <ol className="list-decimal list-inside space-y-2 text-gray-700 ml-4">
+                  <li>Go to the <strong>Dashboard</strong></li>
+                  <li>Find the task you want to review</li>
+                  <li>Click the <strong>Logs</strong> button on the task card</li>
+                  <li>You'll see a table of all past executions</li>
+                  <li>Click <strong>View Logs</strong> on any row to see its complete logs</li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <h4 className="font-semibold text-yellow-900 mb-2">⚠️ No Logs Available?</h4>
+              <p className="text-sm text-yellow-800 mb-2">
+                If you don't see logs for a task execution:
+              </p>
+              <ul className="list-disc list-inside space-y-1 text-yellow-800 text-sm ml-4">
+                <li>The task may have "Capture Logs" disabled - Edit the task and enable this option</li>
+                <li>The task hasn't been run yet - Try running it first</li>
+              </ul>
+            </div>
+          </div>
+        );
+
+      case 'troubleshooting':
+        return (
+          <div className="space-y-6">
+            <h2 className="text-3xl font-bold text-gray-900">Troubleshooting Guide</h2>
+
+            <p className="text-gray-700">
+              Common issues and how to resolve them.
+            </p>
+
+            <div className="space-y-4">
+              <div className="border-l-4 border-red-500 pl-4 py-2">
+                <h3 className="text-xl font-semibold text-gray-900 mb-3">Connection Test Fails</h3>
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="font-medium text-gray-900 mb-2">Common solutions:</p>
+                  <ul className="list-disc list-inside text-gray-700 space-y-2 ml-4">
+                    <li>Verify username and password are correct</li>
+                    <li>Check host/IP address and port number</li>
+                    <li>Confirm firewall allows connections</li>
+                    <li>Check database is running and accessible</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="border-l-4 border-orange-500 pl-4 py-2">
+                <h3 className="text-xl font-semibold text-gray-900 mb-3">Task Execution Fails</h3>
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="font-medium text-gray-900 mb-2">Steps to debug:</p>
+                  <ol className="list-decimal list-inside text-gray-700 space-y-2 ml-4">
+                    <li>Click "View Logs" on the failed execution</li>
+                    <li>Look for red error messages</li>
+                    <li>Check table names and column names are correct</li>
+                    <li>Verify user has required permissions</li>
+                    <li>Test connections individually</li>
+                  </ol>
+                </div>
+              </div>
+
+              <div className="border-l-4 border-yellow-500 pl-4 py-2">
+                <h3 className="text-xl font-semibold text-gray-900 mb-3">No Logs Appearing</h3>
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <p className="font-medium text-gray-900 mb-2">Solution:</p>
+                  <ol className="list-decimal list-inside text-gray-700 space-y-2 ml-4">
+                    <li>Go to Tasks page and click "Edit" on the task</li>
+                    <li>Check the "Capture Logs" checkbox</li>
+                    <li>Save the task</li>
+                    <li>Run it again and logs should appear</li>
+                  </ol>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h3 className="font-semibold text-blue-900 mb-2">💬 Still Need Help?</h3>
+              <p className="text-blue-800 text-sm">
+                If you're still experiencing issues, contact your system administrator with the error message and steps you took.
+              </p>
+            </div>
+          </div>
+        );
+
+      case 'connections':
+          return (
+            <div className="space-y-6">
+              <h2 className="text-3xl font-bold text-gray-900">Managing Connections</h2>
+
+              <p className="text-gray-700">
+                Learn how to configure each type of connection in DataFlow.
+              </p>
+
+              {/* Database Connections */}
+              <div className="border-l-4 border-blue-500 pl-4 py-2">
+                <h3 className="text-xl font-semibold text-gray-900 mb-3">Database Connections</h3>
+
+                <p className="text-gray-700 mb-3">
+                  Connect to PostgreSQL, Oracle, MySQL, and other SQL databases.
+                </p>
+
+                <div className="bg-gray-50 rounded-lg p-4 space-y-4">
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">PostgreSQL Configuration</h4>
+                    <div className="bg-white border border-gray-200 rounded p-3">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Required Fields:</p>
+                      <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-2">
+                        <li><strong>host:</strong> Server hostname or IP (e.g., "localhost" or "db.example.com")</li>
+                        <li><strong>port:</strong> PostgreSQL port (default: 5432)</li>
+                        <li><strong>database:</strong> Database name</li>
+                        <li><strong>user:</strong> Username for authentication</li>
+                        <li><strong>Password:</strong> Use the password field above the configuration (not in JSON)</li>
+                      </ul>
+                      <div className="mt-3 bg-gray-50 p-2 rounded">
+                        <p className="text-xs font-mono text-gray-800">
+                          {`{`}<br/>
+                          &nbsp;&nbsp;"host": "localhost",<br/>
+                          &nbsp;&nbsp;"port": 5432,<br/>
+                          &nbsp;&nbsp;"database": "mydb",<br/>
+                          &nbsp;&nbsp;"user": "postgres"<br/>
+                          {`}`}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">Oracle Configuration</h4>
+                    <div className="bg-white border border-gray-200 rounded p-3">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Required Fields:</p>
+                      <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-2">
+                        <li><strong>host:</strong> Server hostname or IP</li>
+                        <li><strong>port:</strong> Oracle listener port (default: 1521)</li>
+                        <li><strong>serviceName:</strong> Oracle service name (e.g., "ORCL")</li>
+                        <li><strong>user:</strong> Username for authentication</li>
+                        <li><strong>Password:</strong> Use the password field above the configuration</li>
+                      </ul>
+                      <div className="mt-3 bg-gray-50 p-2 rounded">
+                        <p className="text-xs font-mono text-gray-800">
+                          {`{`}<br/>
+                          &nbsp;&nbsp;"host": "oracle.example.com",<br/>
+                          &nbsp;&nbsp;"port": 1521,<br/>
+                          &nbsp;&nbsp;"serviceName": "ORCL",<br/>
+                          &nbsp;&nbsp;"user": "admin"<br/>
+                          {`}`}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">MySQL Configuration</h4>
+                    <div className="bg-white border border-gray-200 rounded p-3">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Required Fields:</p>
+                      <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-2">
+                        <li><strong>host:</strong> Server hostname or IP</li>
+                        <li><strong>port:</strong> MySQL port (default: 3306)</li>
+                        <li><strong>database:</strong> Database name</li>
+                        <li><strong>user:</strong> Username for authentication</li>
+                        <li><strong>Password:</strong> Use the password field above the configuration</li>
+                      </ul>
+                      <div className="mt-3 bg-gray-50 p-2 rounded">
+                        <p className="text-xs font-mono text-gray-800">
+                          {`{`}<br/>
+                          &nbsp;&nbsp;"host": "mysql.example.com",<br/>
+                          &nbsp;&nbsp;"port": 3306,<br/>
+                          &nbsp;&nbsp;"database": "production",<br/>
+                          &nbsp;&nbsp;"user": "root"<br/>
+                          {`}`}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* SFTP Connections */}
+              <div className="border-l-4 border-green-500 pl-4 py-2">
+                <h3 className="text-xl font-semibold text-gray-900 mb-3">SFTP Connections</h3>
+
+                <p className="text-gray-700 mb-3">
+                  Connect to SFTP servers for file transfer operations.
+                </p>
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="bg-white border border-gray-200 rounded p-3">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Required Fields:</p>
+                    <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-2">
+                      <li><strong>host:</strong> SFTP server hostname or IP</li>
+                      <li><strong>port:</strong> SFTP port (default: 22)</li>
+                      <li><strong>username:</strong> Username for authentication</li>
+                      <li><strong>Password:</strong> Use the password field above the configuration</li>
+                      <li><strong>basePath:</strong> (Optional) Default directory path</li>
+                    </ul>
+                    <div className="mt-3 bg-gray-50 p-2 rounded">
+                      <p className="text-xs font-mono text-gray-800">
+                        {`{`}<br/>
+                        &nbsp;&nbsp;"host": "sftp.example.com",<br/>
+                        &nbsp;&nbsp;"port": 22,<br/>
+                        &nbsp;&nbsp;"username": "sftpuser",<br/>
+                        &nbsp;&nbsp;"basePath": "/uploads"<br/>
+                        {`}`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* File Connections */}
+              <div className="border-l-4 border-purple-500 pl-4 py-2">
+                <h3 className="text-xl font-semibold text-gray-900 mb-3">File Connections (CSV/Excel)</h3>
+
+                <p className="text-gray-700 mb-3">
+                  Connect to file storage for CSV and Excel file operations.
+                </p>
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="bg-white border border-gray-200 rounded p-3">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Required Fields:</p>
+                    <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-2">
+                      <li><strong>filePath:</strong> Full path to the file or directory</li>
+                      <li><strong>fileType:</strong> "csv" or "excel"</li>
+                      <li><strong>delimiter:</strong> (CSV only) Field delimiter (default: ",")</li>
+                      <li><strong>sheetName:</strong> (Excel only) Sheet name to read/write</li>
+                    </ul>
+                    <div className="mt-3 bg-gray-50 p-2 rounded">
+                      <p className="text-xs font-mono text-gray-800 mb-2">CSV Example:</p>
+                      <p className="text-xs font-mono text-gray-800">
+                        {`{`}<br/>
+                        &nbsp;&nbsp;"filePath": "/data/customers.csv",<br/>
+                        &nbsp;&nbsp;"fileType": "csv",<br/>
+                        &nbsp;&nbsp;"delimiter": ","<br/>
+                        {`}`}
+                      </p>
+                    </div>
+                    <div className="mt-3 bg-gray-50 p-2 rounded">
+                      <p className="text-xs font-mono text-gray-800 mb-2">Excel Example:</p>
+                      <p className="text-xs font-mono text-gray-800">
+                        {`{`}<br/>
+                        &nbsp;&nbsp;"filePath": "/data/sales.xlsx",<br/>
+                        &nbsp;&nbsp;"fileType": "excel",<br/>
+                        &nbsp;&nbsp;"sheetName": "Sheet1"<br/>
+                        {`}`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Security Best Practices */}
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h4 className="font-semibold text-yellow-900 mb-2">🔒 Security Best Practices</h4>
+                <ul className="list-disc list-inside space-y-1 text-yellow-800 text-sm ml-4">
+                  <li><strong>Always use the password field</strong> - Never put passwords directly in the JSON configuration</li>
+                  <li>Passwords are encrypted when saved to the database</li>
+                  <li>When editing a connection, you must re-enter the password if you want to change it</li>
+                  <li>Use strong, unique passwords for each connection</li>
+                  <li>Limit connection permissions to only what's needed (read-only when possible)</li>
+                </ul>
+              </div>
+
+              {/* Testing Connections */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="font-semibold text-blue-900 mb-2">✅ Testing Connections</h4>
+                <p className="text-blue-800 text-sm mb-2">
+                  Always test your connection before saving:
+                </p>
+                <ol className="list-decimal list-inside space-y-1 text-blue-800 text-sm ml-4">
+                  <li>Fill in all required fields</li>
+                  <li>Enter the password in the password field</li>
+                  <li>Click "Test Connection" button</li>
+                  <li>Wait for success message</li>
+                  <li>If successful, click "Save" to create the connection</li>
+                </ol>
+              </div>
+            </div>
+          );
+      case 'query-tool':
+          return (
+            <div className="space-y-6">
+              <h2 className="text-3xl font-bold text-gray-900">Query Tool</h2>
+
+              <div className="bg-blue-50 border-l-4 border-blue-500 p-4">
+                <p className="text-blue-900 font-medium">
+                  The Query Tool allows you to test database connections, explore data, and create tasks directly from query results.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="text-xl font-semibold text-gray-900">Purpose</h3>
+                <p className="text-gray-700">
+                  Use the Query Tool to:
+                </p>
+                <ul className="space-y-2 ml-4">
+                  <li className="flex items-start gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-gray-700"><strong>Verify Connections:</strong> Test that your database connections work before using them in tasks</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-gray-700"><strong>Explore Data:</strong> Run ad-hoc queries to understand your data structure and content</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-gray-700"><strong>Test Queries:</strong> Validate your SQL queries before creating tasks with them</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-gray-700"><strong>Quick Task Creation:</strong> Create tasks directly from successful query results</span>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="text-xl font-semibold text-gray-900">How to Use</h3>
+
+                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                  <ol className="list-decimal list-inside space-y-3 text-gray-700 ml-4">
+                    <li>
+                      <strong>Select a Connection</strong>
+                      <p className="text-sm text-gray-600 ml-6 mt-1">
+                        Choose a database connection from the dropdown. Only connections marked as "Can be Source" will appear.
+                      </p>
+                    </li>
+                    <li>
+                      <strong>Write Your Query</strong>
+                      <p className="text-sm text-gray-600 ml-6 mt-1">
+                        Enter a SQL query in the text area. Start with simple queries like <code className="bg-white px-1 py-0.5 rounded text-xs">SELECT * FROM table_name LIMIT 10</code>
+                      </p>
+                    </li>
+                    <li>
+                      <strong>Execute Query</strong>
+                      <p className="text-sm text-gray-600 ml-6 mt-1">
+                        Click the "Execute Query" button. The query will run against your selected connection.
+                      </p>
+                    </li>
+                    <li>
+                      <strong>Review Results</strong>
+                      <p className="text-sm text-gray-600 ml-6 mt-1">
+                        Results appear in a table below. You can scroll through rows and columns to verify the data.
+                      </p>
+                    </li>
+                    <li>
+                      <strong>(Optional) Create Task</strong>
+                      <p className="text-sm text-gray-600 ml-6 mt-1">
+                        If the query looks good, click "Create Task from Query" to automatically create a new task using this query as the source.
+                      </p>
+                    </li>
+                  </ol>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="text-xl font-semibold text-gray-900">Example Queries</h3>
+
+                <div className="space-y-3">
+                  <div className="border border-gray-200 rounded-lg p-3">
+                    <p className="font-medium text-gray-900 mb-2">List All Tables</p>
+                    <div className="bg-gray-900 text-green-400 p-3 rounded font-mono text-sm">
+                      -- PostgreSQL<br/>
+                      SELECT table_name FROM information_schema.tables<br/>
+                      WHERE table_schema = 'public';
+                    </div>
+                  </div>
+
+                  <div className="border border-gray-200 rounded-lg p-3">
+                    <p className="font-medium text-gray-900 mb-2">Preview Table Data</p>
+                    <div className="bg-gray-900 text-green-400 p-3 rounded font-mono text-sm">
+                      SELECT * FROM customers LIMIT 10;
+                    </div>
+                  </div>
+
+                  <div className="border border-gray-200 rounded-lg p-3">
+                    <p className="font-medium text-gray-900 mb-2">Count Records</p>
+                    <div className="bg-gray-900 text-green-400 p-3 rounded font-mono text-sm">
+                      SELECT COUNT(*) as total_records FROM orders;
+                    </div>
+                  </div>
+
+                  <div className="border border-gray-200 rounded-lg p-3">
+                    <p className="font-medium text-gray-900 mb-2">Filter and Sort</p>
+                    <div className="bg-gray-900 text-green-400 p-3 rounded font-mono text-sm">
+                      SELECT id, name, email, created_at<br/>
+                      FROM users<br/>
+                      WHERE created_at &gt;= '2024-01-01'<br/>
+                      ORDER BY created_at DESC<br/>
+                      LIMIT 100;
+                    </div>
+                  </div>
+
+                  <div className="border border-gray-200 rounded-lg p-3">
+                    <p className="font-medium text-gray-900 mb-2">Join Tables</p>
+                    <div className="bg-gray-900 text-green-400 p-3 rounded font-mono text-sm">
+                      SELECT o.order_id, o.order_date, c.customer_name<br/>
+                      FROM orders o<br/>
+                      JOIN customers c ON o.customer_id = c.id<br/>
+                      LIMIT 50;
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h4 className="font-semibold text-yellow-900 mb-2">⚠️ Important Notes</h4>
+                <ul className="list-disc list-inside space-y-1 text-yellow-800 text-sm ml-4">
+                  <li>Queries run with the permissions of the connection user - make sure they have appropriate access</li>
+                  <li>Large result sets may take time to load - use LIMIT to test with smaller datasets first</li>
+                  <li>The Query Tool is read-only - it won't modify your data (unless you use UPDATE/DELETE)</li>
+                  <li>Test your queries here before using them in production tasks</li>
+                </ul>
+              </div>
+
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <h4 className="font-semibold text-green-900 mb-2">💡 Pro Tips</h4>
+                <ul className="list-disc list-inside space-y-1 text-green-800 text-sm ml-4">
+                  <li>Always use LIMIT when testing queries to avoid loading too much data</li>
+                  <li>Check column names and data types before creating tasks</li>
+                  <li>Use WHERE clauses to filter data before loading into tasks</li>
+                  <li>The "Create Task from Query" button saves time by pre-filling the source query</li>
+                </ul>
+              </div>
+            </div>
+          );
+      case 'tasks':
+          return (
+            <div className="space-y-6">
+              <h2 className="text-3xl font-bold text-gray-900">Creating Tasks</h2>
+
+              <p className="text-gray-700">
+                Creating tasks is covered in detail in the <strong>Getting Started</strong> section. Refer to Step 3 for complete instructions on creating your first task.
+              </p>
+
+              <div className="bg-blue-50 border-l-4 border-blue-500 p-4">
+                <p className="text-blue-900 font-medium mb-2">
+                  Quick Reference: Two Ways to Create Tasks
+                </p>
+                <ol className="list-decimal list-inside space-y-2 text-blue-800 ml-4">
+                  <li>
+                    <strong>From Tasks Page:</strong> Click "Create Task" button and fill in the form manually
+                  </li>
+                  <li>
+                    <strong>From Query Tool:</strong> Run a query, then click "Create Task from Query" to auto-fill the source
+                  </li>
+                </ol>
+              </div>
+
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">Task Fields Explained</h3>
+
+                <div className="space-y-3">
+                  <div>
+                    <p className="font-medium text-gray-900">Name</p>
+                    <p className="text-sm text-gray-600">Give your task a descriptive name (e.g., "Daily Customer Sync")</p>
+                  </div>
+
+                  <div>
+                    <p className="font-medium text-gray-900">Source Connection</p>
+                    <p className="text-sm text-gray-600">Where the data comes from (must be marked "Can be Source")</p>
+                  </div>
+
+                  <div>
+                    <p className="font-medium text-gray-900">Source Query/Config</p>
+                    <p className="text-sm text-gray-600">SQL query for databases, or file path for files</p>
+                  </div>
+
+                  <div>
+                    <p className="font-medium text-gray-900">Target Connection</p>
+                    <p className="text-sm text-gray-600">Where the data goes (must be marked "Can be Target")</p>
+                  </div>
+
+                  <div>
+                    <p className="font-medium text-gray-900">Target Table/File</p>
+                    <p className="text-sm text-gray-600">Destination table name or file path</p>
+                  </div>
+
+                  <div>
+                    <p className="font-medium text-gray-900">Load Strategy</p>
+                    <p className="text-sm text-gray-600">How to handle existing data:</p>
+                    <ul className="list-disc list-inside ml-4 mt-1 text-xs text-gray-600 space-y-1">
+                      <li><strong>append:</strong> Add to existing data</li>
+                      <li><strong>truncate_and_load:</strong> Delete all rows, then insert new data</li>
+                      <li><strong>drop_and_create:</strong> Drop table and recreate</li>
+                      <li><strong>create_if_not_exists:</strong> Create table only if it doesn't exist</li>
+                    </ul>
+                  </div>
+
+                  <div>
+                    <p className="font-medium text-gray-900">Capture Logs</p>
+                    <p className="text-sm text-gray-600">Enable this to view execution history and logs (recommended)</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-blue-900 text-sm">
+                  For step-by-step instructions with examples, see the <button onClick={() => setActiveSection('getting-started')} className="underline font-medium">Getting Started</button> guide.
+                </p>
+              </div>
+            </div>
+          );
+      case 'teams':
+          return (
+            <div className="space-y-6">
+              <h2 className="text-3xl font-bold text-gray-900">Team Management</h2>
+
+              <p className="text-gray-700">
+                Teams allow you to organize and share connections and tasks with other users in your organization.
+              </p>
+
+              <div className="space-y-4">
+                <h3 className="text-xl font-semibold text-gray-900">How Teams Work</h3>
+
+                <ul className="space-y-2 ml-4">
+                  <li className="flex items-start gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-gray-700">
+                      <strong>Team Isolation:</strong> All connections and tasks are specific to a team. Users in Team A cannot see resources from Team B.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-gray-700">
+                      <strong>Multi-Team Access:</strong> Users can belong to multiple teams and switch between them using the team dropdown in the top navigation.
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-gray-700">
+                      <strong>Shared Resources:</strong> Everyone on a team can see and use all connections and tasks within that team.
+                    </span>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="text-xl font-semibold text-gray-900">Switching Teams</h3>
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <ol className="list-decimal list-inside space-y-2 text-gray-700 ml-4">
+                    <li>Click the team dropdown in the top navigation bar (next to your username)</li>
+                    <li>Select the team you want to switch to from the list</li>
+                    <li>All data in the application will update to show resources for the selected team</li>
+                    <li>Your team selection is saved and will persist when you return to the application</li>
+                  </ol>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="text-xl font-semibold text-gray-900">Team Management</h3>
+
+                <p className="text-gray-700">
+                  Team creation and user assignments are managed by system administrators. If you need to:
+                </p>
+
+                <ul className="list-disc list-inside space-y-1 text-gray-700 ml-4 mt-2">
+                  <li>Create a new team</li>
+                  <li>Add users to a team</li>
+                  <li>Remove users from a team</li>
+                  <li>Change team settings</li>
+                </ul>
+
+                <p className="text-gray-700 mt-2">
+                  Please contact your system administrator.
+                </p>
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h4 className="font-semibold text-yellow-900 mb-2">⚠️ Important</h4>
+                <ul className="list-disc list-inside space-y-1 text-yellow-800 text-sm ml-4">
+                  <li>Always verify you're in the correct team before creating or modifying resources</li>
+                  <li>Connections and tasks are NOT shared between teams</li>
+                  <li>When you run a task, it runs in the context of the currently selected team</li>
+                  <li>Execution history is team-specific</li>
+                </ul>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="font-semibold text-blue-900 mb-2">💡 Best Practices</h4>
+                <ul className="list-disc list-inside space-y-1 text-blue-800 text-sm ml-4">
+                  <li>Organize teams by department, project, or environment (Dev, QA, Prod)</li>
+                  <li>Use descriptive team names that make it clear what the team is for</li>
+                  <li>Double-check the team dropdown before running tasks in production</li>
+                  <li>Consider creating separate teams for testing vs production workloads</li>
+                </ul>
+              </div>
+            </div>
+          );
+      case 'faq':
+        return (
+          <div className="space-y-4">
+            <h2 className="text-2xl font-bold text-gray-900">
+              {sections.find(s => s.id === activeSection)?.title}
+            </h2>
+            <p className="text-gray-700">
+              Documentation for this section is coming soon. Please refer to the Overview and Getting Started guides for now.
+            </p>
+          </div>
+        );
+
+      default:
+        return null;
+    }
   };
 
   return (
@@ -1649,6 +2557,671 @@ const DocumentationPage = () => {
           {renderContent()}
         </div>
       </div>
+    </div>
+  );
+};
+
+// Admin Page Component
+const AdminPage = () => {
+  const [activeTab, setActiveTab] = useState('users');
+  const [users, setUsers] = useState([]);
+  const [teams, setTeams] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showUserForm, setShowUserForm] = useState(false);
+  const [showTeamForm, setShowTeamForm] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [editingTeam, setEditingTeam] = useState(null);
+  const [formData, setFormData] = useState({});
+
+  useEffect(() => {
+    loadData();
+  }, [activeTab]);
+
+  const loadData = async () => {
+  setLoading(true);
+  try {
+    if (activeTab === 'users') {
+      const response = await fetch('/api/admin/users');
+      const data = await response.json();
+      setUsers(data.users || []);
+    } else if (activeTab === 'teams') {
+      const response = await fetch('/api/admin/teams');
+      const data = await response.json();
+      setTeams(data.teams || []);
+    }
+  } catch (error) {
+    console.error('Failed to load data:', error);
+  } finally {
+    setLoading(false);
+  }
+};
+
+  const handleCreateUser = async () => {
+    try {
+      // ✅ Direct fetch
+      const response = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+
+      if (response.ok) {
+        setShowUserForm(false);
+        setFormData({});
+        loadData();
+      } else {
+        const error = await response.json();
+        alert('Error: ' + error.error);
+      }
+    } catch (error) {
+      alert('Failed to create user');
+    }
+  };
+
+  const handleUpdateUser = async (userId) => {
+    try {
+      // ✅ Direct fetch
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+
+      if (response.ok) {
+        setEditingUser(null);
+        setFormData({});
+        loadData();
+      } else {
+        const error = await response.json();
+        alert('Error: ' + error.error);
+      }
+    } catch (error) {
+      alert('Failed to update user');
+    }
+  };
+
+  const handleDeleteUser = async (userId) => {
+    if (!confirm('Are you sure you want to deactivate this user?')) return;
+
+    try {
+      // ✅ Direct fetch
+      const response = await fetch(`/api/admin/users/${userId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        loadData();
+      } else {
+        const error = await response.json();
+        alert('Error: ' + error.error);
+      }
+    } catch (error) {
+      alert('Failed to delete user');
+    }
+  };
+
+  const handleCreateTeam = async () => {
+    try {
+      // ✅ Direct fetch
+      const response = await fetch('/api/admin/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+
+      if (response.ok) {
+        setShowTeamForm(false);
+        setFormData({});
+        loadData();
+      } else {
+        const error = await response.json();
+        alert('Error: ' + error.error);
+      }
+    } catch (error) {
+      alert('Failed to create team');
+    }
+  };
+
+  const handleUpdateTeam = async (teamId) => {
+    try {
+      // ✅ Direct fetch
+      const response = await fetch(`/api/admin/teams/${teamId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+
+      if (response.ok) {
+        setEditingTeam(null);
+        setFormData({});
+        loadData();
+      } else {
+        const error = await response.json();
+        alert('Error: ' + error.error);
+      }
+    } catch (error) {
+      alert('Failed to update team');
+    }
+  };
+
+  const handleDeleteTeam = async (teamId) => {
+    if (!confirm('Are you sure you want to deactivate this team? All team members will be removed.')) return;
+
+    try {
+      // ✅ Direct fetch
+      const response = await fetch(`/api/admin/teams/${teamId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        loadData();
+      } else {
+        const error = await response.json();
+        alert('Error: ' + error.error);
+      }
+    } catch (error) {
+      alert('Failed to delete team');
+    }
+  };
+
+  const handleAddUserToTeam = async (teamId, userId, role) => {
+    try {
+      // ✅ Direct fetch
+      const response = await fetch(`/api/admin/teams/${teamId}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, role })
+      });
+
+      if (response.ok) {
+        loadData();
+      } else {
+        const error = await response.json();
+        alert('Error: ' + error.error);
+      }
+    } catch (error) {
+      alert('Failed to add user to team');
+    }
+  };
+
+  const handleRemoveUserFromTeam = async (teamId, userId) => {
+    if (!confirm('Remove this user from the team?')) return;
+
+    try {
+      // ✅ Direct fetch
+      const response = await fetch(`/api/admin/teams/${teamId}/members?userId=${userId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        loadData();
+      } else {
+        const error = await response.json();
+        alert('Error: ' + error.error);
+      }
+    } catch (error) {
+      alert('Failed to remove user from team');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Admin Panel</h1>
+      </div>
+
+      {/* Tabs */}
+      <div className="border-b border-gray-200">
+        <nav className="flex gap-8">
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'users'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <User className="inline w-4 h-4 mr-2" />
+            Users
+          </button>
+          <button
+            onClick={() => setActiveTab('teams')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'teams'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <Users className="inline w-4 h-4 mr-2" />
+            Teams
+          </button>
+        </nav>
+      </div>
+
+      {/* Users Tab */}
+      {activeTab === 'users' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-semibold text-gray-900">Users</h2>
+            <button
+              onClick={() => {
+                setShowUserForm(true);
+                setFormData({ email: '', password: '', first_name: '', last_name: '', is_admin: false });
+              }}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add User
+            </button>
+          </div>
+
+          {/* User Form Modal */}
+          {(showUserForm || editingUser) && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 w-full max-w-md">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  {editingUser ? 'Edit User' : 'Create New User'}
+                </h3>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                    <input
+                      type="email"
+                      value={formData.email || ''}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      placeholder="user@example.com"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {editingUser ? 'New Password (leave blank to keep current)' : 'Password'}
+                    </label>
+                    <input
+                      type="password"
+                      value={formData.password || ''}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      placeholder={editingUser ? 'Leave blank to keep current' : 'Enter password'}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
+                    <input
+                      type="text"
+                      value={formData.first_name || ''}
+                      onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
+                    <input
+                      type="text"
+                      value={formData.last_name || ''}
+                      onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="is_admin"
+                      checked={formData.is_admin || false}
+                      onChange={(e) => setFormData({ ...formData, is_admin: e.target.checked })}
+                      className="w-4 h-4 text-blue-600"
+                    />
+                    <label htmlFor="is_admin" className="text-sm text-gray-700">
+                      Admin User
+                    </label>
+                  </div>
+
+                  {editingUser && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="is_active"
+                        checked={formData.is_active !== false}
+                        onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                        className="w-4 h-4 text-blue-600"
+                      />
+                      <label htmlFor="is_active" className="text-sm text-gray-700">
+                        Active
+                      </label>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-2 mt-6">
+                  <button
+                    onClick={() => {
+                      if (editingUser) {
+                        handleUpdateUser(editingUser.id);
+                      } else {
+                        handleCreateUser();
+                      }
+                    }}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    {editingUser ? 'Update' : 'Create'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowUserForm(false);
+                      setEditingUser(null);
+                      setFormData({});
+                    }}
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Users List */}
+          {loading ? (
+            <div className="text-center py-8 text-gray-500">Loading users...</div>
+          ) : (
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      User
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Email
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Teams
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {users.map((user) => (
+                    <tr key={user.id}>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">
+                              {user.first_name} {user.last_name}
+                              {user.is_admin && (
+                                <span className="ml-2 px-2 py-0.5 text-xs bg-purple-100 text-purple-800 rounded">
+                                  Admin
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {user.email}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        {user.teams && user.teams.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {user.teams.map((t) => (
+                              <span key={t.team_id} className="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 rounded">
+                                {t.team_name} ({t.role})
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">No teams</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 py-1 text-xs rounded-full ${
+                          user.is_active
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {user.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <button
+                          onClick={() => {
+                            setEditingUser(user);
+                            setFormData({
+                              email: user.email,
+                              first_name: user.first_name,
+                              last_name: user.last_name,
+                              is_admin: user.is_admin,
+                              is_active: user.is_active
+                            });
+                          }}
+                          className="text-blue-600 hover:text-blue-900 mr-3"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteUser(user.id)}
+                          className="text-red-600 hover:text-red-900"
+                        >
+                          Deactivate
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Teams Tab */}
+      {activeTab === 'teams' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-semibold text-gray-900">Teams</h2>
+            <button
+              onClick={() => {
+                setShowTeamForm(true);
+                setFormData({ name: '', description: '' });
+              }}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              Add Team
+            </button>
+          </div>
+
+          {/* Team Form Modal */}
+          {(showTeamForm || editingTeam) && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 w-full max-w-md">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  {editingTeam ? 'Edit Team' : 'Create New Team'}
+                </h3>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Team Name</label>
+                    <input
+                      type="text"
+                      value={formData.name || ''}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      placeholder="Engineering, Marketing, etc."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                    <textarea
+                      value={formData.description || ''}
+                      onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      rows={3}
+                      placeholder="Team description..."
+                    />
+                  </div>
+
+                  {editingTeam && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="team_is_active"
+                        checked={formData.is_active !== false}
+                        onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                        className="w-4 h-4 text-blue-600"
+                      />
+                      <label htmlFor="team_is_active" className="text-sm text-gray-700">
+                        Active
+                      </label>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-2 mt-6">
+                  <button
+                    onClick={() => {
+                      if (editingTeam) {
+                        handleUpdateTeam(editingTeam.id);
+                      } else {
+                        handleCreateTeam();
+                      }
+                    }}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    {editingTeam ? 'Update' : 'Create'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowTeamForm(false);
+                      setEditingTeam(null);
+                      setFormData({});
+                    }}
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Teams List */}
+          {loading ? (
+            <div className="text-center py-8 text-gray-500">Loading teams...</div>
+          ) : (
+            <div className="grid gap-4">
+              {teams.map((team) => (
+                <div key={team.id} className="bg-white rounded-lg shadow p-6">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900">{team.name}</h3>
+                      <p className="text-sm text-gray-600 mt-1">{team.description}</p>
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className={`px-2 py-1 text-xs rounded-full ${
+                          team.is_active
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {team.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                        <span className="text-sm text-gray-500">
+                          {team.member_count || 0} members
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          setEditingTeam(team);
+                          setFormData({
+                            name: team.name,
+                            description: team.description,
+                            is_active: team.is_active
+                          });
+                        }}
+                        className="px-3 py-1 text-sm text-blue-600 hover:text-blue-900"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTeam(team.id)}
+                        className="px-3 py-1 text-sm text-red-600 hover:text-red-900"
+                      >
+                        Deactivate
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Team Members */}
+                  <div className="border-t pt-4">
+                    <h4 className="text-sm font-medium text-gray-900 mb-2">Members</h4>
+                    {team.members && team.members.length > 0 ? (
+                      <div className="space-y-2">
+                        {team.members.map((member) => (
+                          <div key={member.user_id} className="flex justify-between items-center text-sm">
+                            <div>
+                              <span className="text-gray-900">{member.user_name}</span>
+                              <span className="text-gray-500 ml-2">({member.user_email})</span>
+                              <span className="ml-2 px-2 py-0.5 text-xs bg-gray-100 text-gray-700 rounded">
+                                {member.role}
+                              </span>
+                            </div>
+                            <button
+                              onClick={() => handleRemoveUserFromTeam(team.id, member.user_id)}
+                              className="text-red-600 hover:text-red-900"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500">No members yet</p>
+                    )}
+
+                    {/* Add Member */}
+                    <div className="mt-4 flex gap-2">
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            const [userId, role] = e.target.value.split(':');
+                            handleAddUserToTeam(team.id, parseInt(userId), role);
+                            e.target.value = '';
+                          }
+                        }}
+                        className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
+                      >
+                        <option value="">Add member...</option>
+                        {users
+                          .filter(u => u.is_active && !team.members?.some(m => m.user_id === u.id))
+                          .map(u => (
+                            <optgroup key={u.id} label={`${u.first_name} ${u.last_name} (${u.email})`}>
+                              <option value={`${u.id}:member`}>as Member</option>
+                              <option value={`${u.id}:admin`}>as Admin</option>
+                              <option value={`${u.id}:viewer`}>as Viewer</option>
+                            </optgroup>
+                          ))
+                        }
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -1835,13 +3408,13 @@ const ExecutionMonitor = ({ executionId, onClose }) => {
 };
 
 const DataPipelineApp = () => {
+  const { data: session } = useSession();
+  const currentUser = session?.user;
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [currentTeam, setCurrentTeam] = useState(null);
   const [userTeams, setUserTeams] = useState([]);
   const [taskFormData, setTaskFormData] = useState(null);
-  const [currentUser, setCurrentUser] = useState({ name: 'John Doe', email: 'john@example.com' });
-
   useEffect(() => {
     loadUserTeams();
   }, []);
@@ -1859,37 +3432,42 @@ const DataPipelineApp = () => {
       case 'create-task':
       case 'edit-task':
         return <TaskFormPage taskFormData={taskFormData} setCurrentPage={setCurrentPage} />;
+      case 'admin':
+        return <AdminPage />
       default:
         return <DashboardPage />;
     }
   };
 
   const loadUserTeams = async () => {
-    try {
-      const teams = await api.teams.list();
-      setUserTeams(teams);
+      try {
+        const teams = await api.teams.list();
+        setUserTeams(teams);
 
-      if (teams.length > 0) {
-        const savedTeamId = localStorage.getItem('currentTeamId');
-        const defaultTeam = savedTeamId
-          ? teams.find(t => t.id === parseInt(savedTeamId))
-          : teams[0];
-        setCurrentTeam(defaultTeam || teams[0]);
-        localStorage.setItem('currentTeamId', (defaultTeam || teams[0]).id);
+        if (teams.length > 0) {
+          const savedTeamId = localStorage.getItem('currentTeamId');
+          const defaultTeam = savedTeamId
+            ? teams.find(t => t.id === parseInt(savedTeamId))
+            : teams[0];
+
+          const selectedTeam = defaultTeam || teams[0];
+          setCurrentTeam(selectedTeam);
+          localStorage.setItem('currentTeamId', selectedTeam.id.toString()); // ✅ Ensure it's a string
+        }
+      } catch (error) {
+        console.error('Failed to load teams:', error);
       }
-    } catch (error) {
-      console.error('Failed to load teams:', error);
-    }
-  };
+    };
 
   return (
-    <TeamContext.Provider value={{ currentTeam, setCurrentTeam }}>
+    <TeamContext.Provider value={{ currentTeam, setCurrentTeam, currentUser }}>
       <div className="min-h-screen bg-gray-50 flex">
         <Sidebar
           currentPage={currentPage}
           setCurrentPage={setCurrentPage}
           sidebarOpen={sidebarOpen}
           setSidebarOpen={setSidebarOpen}
+          currentUser={currentUser}
         />
 
         <div className="flex-1 flex flex-col min-w-0">
@@ -1921,6 +3499,7 @@ const DataPipelineApp = () => {
                 />
               )}
             {currentPage === 'documentation' && <DocumentationPage />}
+            {currentPage === 'admin' && <AdminPage />}
           </main>
         </div>
       </div>

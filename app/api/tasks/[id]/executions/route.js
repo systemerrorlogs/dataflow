@@ -5,8 +5,6 @@ export async function GET(request, { params }) {
   try {
     const { id: taskId } = params;  // ← Gets taskId from URL
 
-    console.log('Fetching executions for task:', taskId);
-
     if (!taskId || isNaN(taskId)) {
       return NextResponse.json({ error: 'Invalid task ID' }, { status: 400 });
     }
@@ -25,7 +23,6 @@ export async function GET(request, { params }) {
       [taskId]  // ← Use taskId here
     );
 
-    console.log('Found executions:', result.rows.length);
 
     // Add default values for display
     const executions = result.rows.map(row => ({

@@ -3,7 +3,6 @@ import { useState, useEffect, useRef } from 'react';
 import { X, AlertCircle, CheckCircle, Clock, FileText } from 'lucide-react';
 
 export default function LogsModal({ isOpen, onClose, executionId, taskName }) {
-  console.log('🔵 LogsModal render:', { isOpen, executionId, taskName });
 
   const [logs, setLogs] = useState([]);
   const [status, setStatus] = useState('running');
@@ -16,20 +15,16 @@ export default function LogsModal({ isOpen, onClose, executionId, taskName }) {
   }, [logs]);
 
   useEffect(() => {
-    console.log('🔵 useEffect triggered:', { isOpen, executionId });
 
     if (!isOpen || !executionId) {
-      console.log('🔴 Not fetching logs - isOpen:', isOpen, 'executionId:', executionId);
       return;
     }
 
     const fetchLogs = async () => {
       try {
         const url = `/api/tasks/executions/${executionId}/logs`;
-        console.log('🔵 Fetching logs from:', url);
 
         const response = await fetch(url);
-        console.log('🔵 Response status:', response.status);
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -38,14 +33,11 @@ export default function LogsModal({ isOpen, onClose, executionId, taskName }) {
         }
 
         const data = await response.json();
-        console.log('🔵 Received data:', data);
-        console.log('🔵 Logs count:', data.logs?.length || 0);
 
         setLogs(data.logs || []);
         setStatus(data.status);
 
         if (data.status === 'success' || data.status === 'failed') {
-          console.log('🟢 Task completed, stopping polling');
           if (intervalRef.current) {
             clearInterval(intervalRef.current);
           }
@@ -56,14 +48,11 @@ export default function LogsModal({ isOpen, onClose, executionId, taskName }) {
       }
     };
 
-    console.log('🔵 Starting initial fetch');
     fetchLogs();
 
-    console.log('🔵 Setting up polling interval');
     intervalRef.current = setInterval(fetchLogs, 2000);
 
     return () => {
-      console.log('🔵 Cleaning up interval');
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
@@ -71,11 +60,9 @@ export default function LogsModal({ isOpen, onClose, executionId, taskName }) {
   }, [isOpen, executionId]);
 
   if (!isOpen) {
-    console.log('🔴 Modal not open, not rendering');
     return null;
   }
 
-  console.log('🔵 Rendering modal with', logs.length, 'logs');
 
   const getStatusIcon = () => {
     switch (status) {

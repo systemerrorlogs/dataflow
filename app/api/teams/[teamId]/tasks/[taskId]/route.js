@@ -17,8 +17,6 @@ export async function GET(req, { params }) {
   try {
     const { teamId, taskId } = params;
 
-    console.log('GET task - Team:', teamId, 'Task:', taskId);
-
     const result = await query(`
       SELECT
         id,
@@ -52,8 +50,6 @@ export async function GET(req, { params }) {
         task.transformation_config = {};
       }
     }
-
-    console.log('Task fetched successfully');
 
     return NextResponse.json(task);
 
@@ -94,8 +90,6 @@ export async function PATCH(req, { params }) {
       target_worksheet,
       transformation_config
     } = body;
-
-    console.log('PATCH task - Team:', teamId, 'Task:', taskId);
 
     // Validation
     if (!name || !source_connection_id || !target_connection_id || !source_query || !target_table) {
@@ -153,8 +147,6 @@ export async function PATCH(req, { params }) {
       return NextResponse.json({ error: 'Task not found or unauthorized' }, { status: 404 });
     }
 
-    console.log('Task updated successfully');
-
     return NextResponse.json(result.rows[0]);
 
   } catch (error) {
@@ -178,8 +170,6 @@ export async function DELETE(req, { params }) {
   try {
     const { teamId, taskId } = params;
 
-    console.log('DELETE task - Team:', teamId, 'Task:', taskId);
-
     const result = await query(`
       UPDATE tasks
       SET is_active = false, updated_at = NOW()
@@ -190,8 +180,6 @@ export async function DELETE(req, { params }) {
     if (result.rows.length === 0) {
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
-
-    console.log('Task deleted successfully');
 
     return NextResponse.json({ success: true, message: 'Task deleted' });
 
