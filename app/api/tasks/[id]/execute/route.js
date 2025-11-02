@@ -18,7 +18,7 @@ export async function POST(request, { params }) {
     }
 
     const task = taskCheck.rows[0];
-\
+
     // Create execution record
     const executionResult = await query(
       `INSERT INTO task_executions (task_id, status, started_at)

@@ -6,7 +6,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { FileText, RefreshCw, CheckCircle, XCircle, Clock } from 'lucide-react';
-import ExecutionHistoryModal from '../components/ExecutionHistoryModal';
+import ExecutionHistoryModal from '@/components/ExecutionHistoryModal';
 
 export default function DashboardPage() {
   const [tasks, setTasks] = useState([]);

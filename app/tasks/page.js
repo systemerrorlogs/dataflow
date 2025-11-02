@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { PlayCircle, Edit, Trash2 } from 'lucide-react';
-import LogsModal from '../components/LogsModal';
+import LogsModal from '@/components/LogsModal';
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState([]);
