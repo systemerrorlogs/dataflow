@@ -1,6 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // ✅ Moved from experimental.serverComponentsExternalPackages
   serverExternalPackages: [
     'oracledb',
     'mssql',
@@ -11,6 +10,8 @@ const nextConfig = {
     'axios',
     'bcryptjs',
   ],
+
+  turbopack: {},
 
   webpack: (config, { isServer }) => {
     if (!isServer) {
