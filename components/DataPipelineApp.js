@@ -1,10 +1,12 @@
 'use client';
 import React, { useState, useMemo, createContext, useContext, useEffect } from 'react';
-import { Home, Database, Search, FileText, Plus, RefreshCw, Menu, X, User, Users, LogOut, CheckCircle, XCircle, Clock, PlayCircle, Settings, ChevronDown, BookOpen, HelpCircle } from 'lucide-react';
+import { Home, Database, Search, FileText, Plus, RefreshCw, Menu, X, User, Users, LogOut, CheckCircle, XCircle, Clock, PlayCircle, Settings, ChevronDown, BookOpen, HelpCircle, Download } from 'lucide-react';
 import LogsModal from './LogsModal';
 import ExecutionHistoryModal from './ExecutionHistoryModal';
 import { useSession } from 'next-auth/react';
 import { getEnabledConnectors, getConnectorMetadata, isConnectorEnabled } from '@/lib/config/connectors';
+import ScheduleBuilder from './ScheduleBuilder'; // or wherever you put it
+import { toCronExpression } from '@/lib/cronHelper';
 
 const TeamContext = createContext();
 
@@ -245,20 +247,26 @@ const DashboardPage = () => {
   }, [currentTeam]); // Re-run when team changes
 
   const loadDashboard = async () => {
-    try {
-      setLoading(true);
-      const [dashData, tasksData] = await Promise.all([
-        api.dashboard.stats(),
-        api.tasks.list()
-      ]);
-      setStats(dashData.stats);
-      setTasks(tasksData);
-    } catch (error) {
-      console.error('Failed to load dashboard:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  try {
+    console.log('🔍 loadDashboard called');
+    console.log('🔍 currentTeam:', currentTeam);
+    console.log('🔍 teamId from localStorage:', localStorage.getItem('currentTeamId'));
+
+    setLoading(true);
+    const [dashData, tasksData] = await Promise.all([
+      api.dashboard.stats(),
+      api.tasks.list()
+    ]);
+
+    console.log('✅ Dashboard data loaded:', dashData);
+    setStats(dashData.stats);
+    setTasks(tasksData);
+  } catch (error) {
+    console.error('Failed to load dashboard:', error);
+  } finally {
+    setLoading(false);
+  }
+};
 
 
   const handleViewLogs = (task) => {
@@ -830,6 +838,9 @@ const ConnectionsPage = () => {
   );
 };
 
+// Updated QueryToolPage component with pagination and CSV export
+// Replace your existing QueryToolPage with this version
+
 const QueryToolPage = ({ setCurrentPage, setTaskFormData }) => {
   const [connections, setConnections] = useState([]);
   const [selectedConnection, setSelectedConnection] = useState('');
@@ -838,6 +849,10 @@ const QueryToolPage = ({ setCurrentPage, setTaskFormData }) => {
   const [worksheetName, setWorksheetName] = useState('');
   const [queryResults, setQueryResults] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(25);
 
   useEffect(() => {
     loadConnections();
@@ -869,6 +884,7 @@ const QueryToolPage = ({ setCurrentPage, setTaskFormData }) => {
         worksheet_name: worksheetName || undefined
       });
       setQueryResults(result);
+      setCurrentPage(1); // Reset to first page on new query
     } catch (error) {
       console.error('Query execution failed:', error);
       alert(`Query failed: ${error.message}`);
@@ -885,6 +901,69 @@ const QueryToolPage = ({ setCurrentPage, setTaskFormData }) => {
     });
     setCurrentPage('task-form');
   };
+
+  // Export to CSV function
+  const exportToCSV = () => {
+    if (!queryResults?.rows || queryResults.rows.length === 0) {
+      alert('No data to export');
+      return;
+    }
+
+    try {
+      // Create CSV header
+      const headers = queryResults.columns.join(',');
+
+      // Create CSV rows
+      const csvRows = queryResults.rows.map(row => {
+        return queryResults.columns.map(col => {
+          let value = row[col];
+
+          // Handle null/undefined
+          if (value === null || value === undefined) {
+            return '';
+          }
+
+          // Convert to string and escape quotes
+          value = String(value).replace(/"/g, '""');
+
+          // Wrap in quotes if contains comma, newline, or quote
+          if (value.includes(',') || value.includes('\n') || value.includes('"')) {
+            return `"${value}"`;
+          }
+
+          return value;
+        }).join(',');
+      });
+
+      // Combine header and rows
+      const csv = [headers, ...csvRows].join('\n');
+
+      // Create blob and download
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+
+      link.setAttribute('href', url);
+      link.setAttribute('download', `query_results_${new Date().toISOString().slice(0, 10)}.csv`);
+      link.style.visibility = 'hidden';
+
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (error) {
+      console.error('Export failed:', error);
+      alert('Failed to export CSV');
+    }
+  };
+
+  // Pagination calculations
+  const totalPages = queryResults?.rows
+    ? Math.ceil(queryResults.rows.length / itemsPerPage)
+    : 0;
+
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedRows = queryResults?.rows?.slice(startIndex, endIndex) || [];
 
   const isExcelConnection = selectedConnectionType === 'excel';
   const canExecute = selectedConnection && query && (!isExcelConnection || worksheetName);
@@ -965,11 +1044,46 @@ const QueryToolPage = ({ setCurrentPage, setTaskFormData }) => {
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
           {queryResults.success ? (
             <>
-              <div className="px-6 py-3 bg-gray-50 border-b border-gray-200">
+              {/* Results Header */}
+              <div className="px-6 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
                 <div className="text-sm text-gray-600">
                   {queryResults.rowCount} rows returned in {queryResults.executionTime}ms
+                  {totalPages > 1 && (
+                    <span className="ml-2">
+                      (Showing {startIndex + 1}-{Math.min(endIndex, queryResults.rowCount)})
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  {/* Items per page selector */}
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-gray-600">Rows per page:</label>
+                    <select
+                      value={itemsPerPage}
+                      onChange={(e) => {
+                        setItemsPerPage(parseInt(e.target.value));
+                        setCurrentPage(1); // Reset to first page
+                      }}
+                      className="px-2 py-1 border border-gray-300 rounded text-sm"
+                    >
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                  </div>
+
+                  {/* Export button */}
+                  <button
+                    onClick={exportToCSV}
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                  >
+                    <Download size={16} />
+                    Export CSV
+                  </button>
                 </div>
               </div>
+
+              {/* Table */}
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
@@ -982,18 +1096,91 @@ const QueryToolPage = ({ setCurrentPage, setTaskFormData }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                      {queryResults.rows.map((row, i) => (
-                        <tr key={i} className="hover:bg-gray-50">
-                          {queryResults.columns.map((col, j) => (
-                            <td key={j} className="px-6 py-4 text-sm text-gray-900">
-                              {row[col] !== null && row[col] !== undefined ? String(row[col]) : ''}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
+                    {paginatedRows.map((row, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        {queryResults.columns.map((col, j) => (
+                          <td key={j} className="px-6 py-4 text-sm text-gray-900">
+                            {row[col] !== null && row[col] !== undefined ? String(row[col]) : ''}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+                  <div className="text-sm text-gray-600">
+                    Page {currentPage} of {totalPages}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setCurrentPage(1)}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      First
+                    </button>
+
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Previous
+                    </button>
+
+                    {/* Page numbers */}
+                    <div className="flex gap-1">
+                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                        let pageNum;
+                        if (totalPages <= 5) {
+                          pageNum = i + 1;
+                        } else if (currentPage <= 3) {
+                          pageNum = i + 1;
+                        } else if (currentPage >= totalPages - 2) {
+                          pageNum = totalPages - 4 + i;
+                        } else {
+                          pageNum = currentPage - 2 + i;
+                        }
+
+                        return (
+                          <button
+                            key={i}
+                            onClick={() => setCurrentPage(pageNum)}
+                            className={`px-3 py-1 text-sm border rounded ${
+                              currentPage === pageNum
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'border-gray-300 hover:bg-gray-100'
+                            }`}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Next
+                    </button>
+
+                    <button
+                      onClick={() => setCurrentPage(totalPages)}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Last
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div className="p-6 text-red-600">
@@ -1005,6 +1192,9 @@ const QueryToolPage = ({ setCurrentPage, setTaskFormData }) => {
     </div>
   );
 };
+
+// Don't forget to add the Download icon import at the top of your file:
+// import { PlayCircle, Plus, Download } from 'lucide-react';
 
 const TasksPage = ({ setCurrentPage, setTaskFormData }) => {
   const [tasks, setTasks] = useState([]);
@@ -1157,6 +1347,7 @@ const TaskFormPage = ({ taskFormData, setCurrentPage, editingTask }) => {
   const [strategies, setStrategies] = useState(['check_exists', 'create_table', 'append_data']);
   const [loading, setLoading] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
+  const [scheduleCron, setScheduleCron] = useState(task?.schedule_cron || null);
 
   // Available strategies with descriptions
   const availableStrategies = [
@@ -1284,6 +1475,146 @@ const TaskFormPage = ({ taskFormData, setCurrentPage, editingTask }) => {
     }
   };
 
+  const ScheduleBuilder = ({ schedule, onChange }) => {
+      const [frequency, setFrequency] = useState(schedule?.frequency || 'none');
+      const [time, setTime] = useState(schedule?.time || '00:00');
+      const [dayOfWeek, setDayOfWeek] = useState(schedule?.dayOfWeek || 1);
+      const [dayOfMonth, setDayOfMonth] = useState(schedule?.dayOfMonth || 1);
+      const [customCron, setCustomCron] = useState(schedule?.cronExpression || '');
+
+      const daysOfWeek = [
+        { value: 0, label: 'Sunday' },
+        { value: 1, label: 'Monday' },
+        { value: 2, label: 'Tuesday' },
+        { value: 3, label: 'Wednesday' },
+        { value: 4, label: 'Thursday' },
+        { value: 5, label: 'Friday' },
+        { value: 6, label: 'Saturday' }
+      ];
+
+      useEffect(() => {
+        if (frequency === 'none') {
+          onChange(null);
+        } else {
+          const scheduleData = { frequency, time, dayOfWeek, dayOfMonth, cronExpression: customCron };
+          const cron = toCronExpression(scheduleData);
+          onChange(cron);
+        }
+      }, [frequency, time, dayOfWeek, dayOfMonth, customCron]);
+
+      return (
+        <div className="border border-gray-200 rounded-lg p-4 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Schedule Frequency
+            </label>
+            <select
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+            >
+              <option value="none">No Schedule (Manual Only)</option>
+              <option value="hourly">Hourly</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="custom">Custom Cron Expression</option>
+            </select>
+          </div>
+
+          {frequency === 'hourly' && (
+            <div className="bg-blue-50 border border-blue-200 rounded p-3">
+              <p className="text-sm text-blue-800">
+                ⏰ Task will run every hour at the top of the hour (e.g., 1:00, 2:00, 3:00)
+              </p>
+              <p className="text-xs text-blue-600 mt-1 font-mono">Cron: 0 * * * *</p>
+            </div>
+          )}
+
+          {(frequency === 'daily' || frequency === 'weekly' || frequency === 'monthly') && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Time of Day
+              </label>
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+          )}
+
+          {frequency === 'weekly' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Day of Week
+              </label>
+              <select
+                value={dayOfWeek}
+                onChange={(e) => setDayOfWeek(parseInt(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              >
+                {daysOfWeek.map(day => (
+                  <option key={day.value} value={day.value}>{day.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {frequency === 'monthly' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Day of Month
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="31"
+                value={dayOfMonth}
+                onChange={(e) => setDayOfMonth(parseInt(e.target.value))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              />
+            </div>
+          )}
+
+          {frequency === 'custom' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Cron Expression
+              </label>
+              <input
+                type="text"
+                value={customCron}
+                onChange={(e) => setCustomCron(e.target.value)}
+                placeholder="0 0 * * *"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Format: minute hour day month dayOfWeek
+              </p>
+              <a
+                href="https://crontab.guru/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 hover:underline"
+              >
+                Need help? Use Crontab Guru →
+              </a>
+            </div>
+          )}
+
+          {frequency !== 'none' && frequency !== 'custom' && (
+            <div className="bg-gray-50 border border-gray-200 rounded p-3">
+              <p className="text-xs text-gray-600 font-mono">
+                Cron Expression: {toCronExpression({ frequency, time, dayOfWeek, dayOfMonth })}
+              </p>
+            </div>
+          )}
+        </div>
+      );
+    };
+
   const sourceConnections = connections.filter(c => c.can_be_source);
   const targetConnections = connections.filter(c => c.can_be_target);
 
@@ -1328,7 +1659,9 @@ const TaskFormPage = ({ taskFormData, setCurrentPage, editingTask }) => {
         source_worksheet: sourceWorksheet || undefined,
         target_table: targetTable,
         target_worksheet: targetWorksheet || undefined,
-        loading_strategies: isTargetDatabase ? strategies : null
+        loading_strategies: isTargetDatabase ? strategies : null,
+        schedule_cron: scheduleCron,
+        is_scheduled: !!scheduleCron
       };
 
       if (isEditMode) {
@@ -1627,6 +1960,20 @@ const TaskFormPage = ({ taskFormData, setCurrentPage, editingTask }) => {
             </div>
           </div>
         )}
+
+        <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900 mb-3">
+            Task Schedule (Optional)
+          </h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Schedule this task to run automatically on a recurring basis.
+          </p>
+
+          <ScheduleBuilder
+            schedule={parseCronExpression(scheduleCron)}
+            onChange={setScheduleCron}
+          />
+        </div>
 
         {/* Action Buttons */}
         <div className="flex gap-2 pt-4 border-t border-gray-200">
@@ -2005,13 +2352,13 @@ const DocumentationPage = () => {
           </div>
         );
 
-      case 'connections':
+        case 'connections':
           return (
             <div className="space-y-6">
               <h2 className="text-3xl font-bold text-gray-900">Managing Connections</h2>
 
               <p className="text-gray-700">
-                Learn how to configure each type of connection in DataFlow.
+                Learn how to configure each type of connection in DataFlow. Each connector includes configuration examples and sample queries.
               </p>
 
               {/* Database Connections */}
@@ -2019,111 +2366,231 @@ const DocumentationPage = () => {
                 <h3 className="text-xl font-semibold text-gray-900 mb-3">Database Connections</h3>
 
                 <p className="text-gray-700 mb-3">
-                  Connect to PostgreSQL, Oracle, MySQL, and other SQL databases.
+                  Connect to relational databases using standard SQL queries.
                 </p>
 
                 <div className="bg-gray-50 rounded-lg p-4 space-y-4">
+                  {/* PostgreSQL */}
                   <div>
-                    <h4 className="font-semibold text-gray-900 mb-2">PostgreSQL Configuration</h4>
+                    <h4 className="font-semibold text-gray-900 mb-2">PostgreSQL</h4>
                     <div className="bg-white border border-gray-200 rounded p-3">
-                      <p className="text-sm font-medium text-gray-700 mb-2">Required Fields:</p>
-                      <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-2">
-                        <li><strong>host:</strong> Server hostname or IP (e.g., "localhost" or "db.example.com")</li>
-                        <li><strong>port:</strong> PostgreSQL port (default: 5432)</li>
-                        <li><strong>database:</strong> Database name</li>
-                        <li><strong>user:</strong> Username for authentication</li>
-                        <li><strong>Password:</strong> Use the password field above the configuration (not in JSON)</li>
-                      </ul>
-                      <div className="mt-3 bg-gray-50 p-2 rounded">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Configuration:</p>
+                      <div className="bg-gray-50 p-2 rounded mb-3">
                         <p className="text-xs font-mono text-gray-800">
                           {`{`}<br/>
                           &nbsp;&nbsp;"host": "localhost",<br/>
                           &nbsp;&nbsp;"port": 5432,<br/>
                           &nbsp;&nbsp;"database": "mydb",<br/>
-                          &nbsp;&nbsp;"user": "postgres"<br/>
+                          &nbsp;&nbsp;"username": "postgres"<br/>
                           {`}`}
                         </p>
+                      </div>
+                      <p className="text-sm font-medium text-gray-700 mb-2">Sample Query:</p>
+                      <div className="bg-gray-900 text-green-400 p-2 rounded text-xs font-mono">
+                        SELECT id, name, email, created_at<br/>
+                        FROM users<br/>
+                        WHERE created_at &gt;= CURRENT_DATE - INTERVAL '7 days'<br/>
+                        ORDER BY created_at DESC<br/>
+                        LIMIT 100;
                       </div>
                     </div>
                   </div>
 
+                  {/* MySQL */}
                   <div>
-                    <h4 className="font-semibold text-gray-900 mb-2">Oracle Configuration</h4>
+                    <h4 className="font-semibold text-gray-900 mb-2">MySQL</h4>
                     <div className="bg-white border border-gray-200 rounded p-3">
-                      <p className="text-sm font-medium text-gray-700 mb-2">Required Fields:</p>
-                      <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-2">
-                        <li><strong>host:</strong> Server hostname or IP</li>
-                        <li><strong>port:</strong> Oracle listener port (default: 1521)</li>
-                        <li><strong>serviceName:</strong> Oracle service name (e.g., "ORCL")</li>
-                        <li><strong>user:</strong> Username for authentication</li>
-                        <li><strong>Password:</strong> Use the password field above the configuration</li>
-                      </ul>
-                      <div className="mt-3 bg-gray-50 p-2 rounded">
-                        <p className="text-xs font-mono text-gray-800">
-                          {`{`}<br/>
-                          &nbsp;&nbsp;"host": "oracle.example.com",<br/>
-                          &nbsp;&nbsp;"port": 1521,<br/>
-                          &nbsp;&nbsp;"serviceName": "ORCL",<br/>
-                          &nbsp;&nbsp;"user": "admin"<br/>
-                          {`}`}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="font-semibold text-gray-900 mb-2">MySQL Configuration</h4>
-                    <div className="bg-white border border-gray-200 rounded p-3">
-                      <p className="text-sm font-medium text-gray-700 mb-2">Required Fields:</p>
-                      <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-2">
-                        <li><strong>host:</strong> Server hostname or IP</li>
-                        <li><strong>port:</strong> MySQL port (default: 3306)</li>
-                        <li><strong>database:</strong> Database name</li>
-                        <li><strong>user:</strong> Username for authentication</li>
-                        <li><strong>Password:</strong> Use the password field above the configuration</li>
-                      </ul>
-                      <div className="mt-3 bg-gray-50 p-2 rounded">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Configuration:</p>
+                      <div className="bg-gray-50 p-2 rounded mb-3">
                         <p className="text-xs font-mono text-gray-800">
                           {`{`}<br/>
                           &nbsp;&nbsp;"host": "mysql.example.com",<br/>
                           &nbsp;&nbsp;"port": 3306,<br/>
                           &nbsp;&nbsp;"database": "production",<br/>
-                          &nbsp;&nbsp;"user": "root"<br/>
+                          &nbsp;&nbsp;"username": "root"<br/>
                           {`}`}
                         </p>
+                      </div>
+                      <p className="text-sm font-medium text-gray-700 mb-2">Sample Query:</p>
+                      <div className="bg-gray-900 text-green-400 p-2 rounded text-xs font-mono">
+                        SELECT o.order_id, o.order_date, c.customer_name, o.total<br/>
+                        FROM orders o<br/>
+                        JOIN customers c ON o.customer_id = c.id<br/>
+                        WHERE o.order_date &gt;= DATE_SUB(NOW(), INTERVAL 30 DAY)<br/>
+                        ORDER BY o.order_date DESC;
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Oracle */}
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">Oracle</h4>
+                    <div className="bg-white border border-gray-200 rounded p-3">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Configuration:</p>
+                      <div className="bg-gray-50 p-2 rounded mb-3">
+                        <p className="text-xs font-mono text-gray-800">
+                          {`{`}<br/>
+                          &nbsp;&nbsp;"host": "oracle.example.com",<br/>
+                          &nbsp;&nbsp;"port": 1521,<br/>
+                          &nbsp;&nbsp;"service_name": "ORCL",<br/>
+                          &nbsp;&nbsp;"username": "admin"<br/>
+                          {`}`}
+                        </p>
+                      </div>
+                      <p className="text-sm font-medium text-gray-700 mb-2">Sample Query:</p>
+                      <div className="bg-gray-900 text-green-400 p-2 rounded text-xs font-mono">
+                        SELECT employee_id, first_name, last_name, hire_date<br/>
+                        FROM employees<br/>
+                        WHERE hire_date &gt;= ADD_MONTHS(SYSDATE, -12)<br/>
+                        ORDER BY hire_date DESC<br/>
+                        FETCH FIRST 100 ROWS ONLY;
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SQL Server */}
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">SQL Server</h4>
+                    <div className="bg-white border border-gray-200 rounded p-3">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Configuration:</p>
+                      <div className="bg-gray-50 p-2 rounded mb-3">
+                        <p className="text-xs font-mono text-gray-800">
+                          {`{`}<br/>
+                          &nbsp;&nbsp;"host": "sqlserver.example.com",<br/>
+                          &nbsp;&nbsp;"port": 1433,<br/>
+                          &nbsp;&nbsp;"database": "MyDatabase",<br/>
+                          &nbsp;&nbsp;"username": "sa"<br/>
+                          {`}`}
+                        </p>
+                      </div>
+                      <p className="text-sm font-medium text-gray-700 mb-2">Sample Query:</p>
+                      <div className="bg-gray-900 text-green-400 p-2 rounded text-xs font-mono">
+                        SELECT TOP 100 ProductID, ProductName, UnitPrice, UnitsInStock<br/>
+                        FROM Products<br/>
+                        WHERE Discontinued = 0<br/>
+                        ORDER BY ProductName;
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Vertica */}
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">Vertica</h4>
+                    <div className="bg-white border border-gray-200 rounded p-3">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Configuration:</p>
+                      <div className="bg-gray-50 p-2 rounded mb-3">
+                        <p className="text-xs font-mono text-gray-800">
+                          {`{`}<br/>
+                          &nbsp;&nbsp;"host": "vertica.example.com",<br/>
+                          &nbsp;&nbsp;"port": 5433,<br/>
+                          &nbsp;&nbsp;"database": "analytics",<br/>
+                          &nbsp;&nbsp;"username": "dbadmin"<br/>
+                          {`}`}
+                        </p>
+                      </div>
+                      <p className="text-sm font-medium text-gray-700 mb-2">Sample Query:</p>
+                      <div className="bg-gray-900 text-green-400 p-2 rounded text-xs font-mono">
+                        SELECT DATE_TRUNC('day', event_time) AS day,<br/>
+                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;COUNT(*) AS event_count,<br/>
+                        &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;COUNT(DISTINCT user_id) AS unique_users<br/>
+                        FROM events<br/>
+                        WHERE event_time &gt;= CURRENT_DATE - 30<br/>
+                        GROUP BY 1<br/>
+                        ORDER BY 1 DESC;
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* CockroachDB */}
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">CockroachDB</h4>
+                    <div className="bg-white border border-gray-200 rounded p-3">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Configuration:</p>
+                      <div className="bg-gray-50 p-2 rounded mb-3">
+                        <p className="text-xs font-mono text-gray-800">
+                          {`{`}<br/>
+                          &nbsp;&nbsp;"host": "cockroach.example.com",<br/>
+                          &nbsp;&nbsp;"port": 26257,<br/>
+                          &nbsp;&nbsp;"database": "myapp",<br/>
+                          &nbsp;&nbsp;"username": "root",<br/>
+                          &nbsp;&nbsp;"ssl": true<br/>
+                          {`}`}
+                        </p>
+                      </div>
+                      <p className="text-sm font-medium text-gray-700 mb-2">Sample Query:</p>
+                      <div className="bg-gray-900 text-green-400 p-2 rounded text-xs font-mono">
+                        SELECT region, status, COUNT(*) AS order_count<br/>
+                        FROM orders<br/>
+                        WHERE created_at &gt; NOW() - INTERVAL '7 days'<br/>
+                        GROUP BY region, status<br/>
+                        ORDER BY region, order_count DESC;
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* SFTP Connections */}
+              {/* Cloud Service Connections */}
               <div className="border-l-4 border-green-500 pl-4 py-2">
-                <h3 className="text-xl font-semibold text-gray-900 mb-3">SFTP Connections</h3>
+                <h3 className="text-xl font-semibold text-gray-900 mb-3">Cloud Service Connections</h3>
 
                 <p className="text-gray-700 mb-3">
-                  Connect to SFTP servers for file transfer operations.
+                  Connect to cloud platforms using their native APIs and query languages.
                 </p>
 
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="bg-white border border-gray-200 rounded p-3">
-                    <p className="text-sm font-medium text-gray-700 mb-2">Required Fields:</p>
-                    <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-2">
-                      <li><strong>host:</strong> SFTP server hostname or IP</li>
-                      <li><strong>port:</strong> SFTP port (default: 22)</li>
-                      <li><strong>username:</strong> Username for authentication</li>
-                      <li><strong>Password:</strong> Use the password field above the configuration</li>
-                      <li><strong>basePath:</strong> (Optional) Default directory path</li>
-                    </ul>
-                    <div className="mt-3 bg-gray-50 p-2 rounded">
-                      <p className="text-xs font-mono text-gray-800">
-                        {`{`}<br/>
-                        &nbsp;&nbsp;"host": "sftp.example.com",<br/>
-                        &nbsp;&nbsp;"port": 22,<br/>
-                        &nbsp;&nbsp;"username": "sftpuser",<br/>
-                        &nbsp;&nbsp;"basePath": "/uploads"<br/>
-                        {`}`}
-                      </p>
+                <div className="bg-gray-50 rounded-lg p-4 space-y-4">
+                  {/* Salesforce */}
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">Salesforce</h4>
+                    <div className="bg-white border border-gray-200 rounded p-3">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Configuration:</p>
+                      <div className="bg-gray-50 p-2 rounded mb-3">
+                        <p className="text-xs font-mono text-gray-800">
+                          {`{`}<br/>
+                          &nbsp;&nbsp;"username": "user@company.com",<br/>
+                          &nbsp;&nbsp;"loginUrl": "https://login.salesforce.com"<br/>
+                          {`}`}
+                        </p>
+                        <p className="text-xs text-gray-600 mt-2">
+                          <strong>Password:</strong> Enter your Salesforce password + security token combined (no space) in the password field above
+                        </p>
+                      </div>
+                      <p className="text-sm font-medium text-gray-700 mb-2">Sample Query (SOQL):</p>
+                      <div className="bg-gray-900 text-green-400 p-2 rounded text-xs font-mono">
+                        SELECT Id, Name, Email, Phone, Account.Name<br/>
+                        FROM Contact<br/>
+                        WHERE Email != null<br/>
+                        AND CreatedDate = THIS_YEAR<br/>
+                        ORDER BY CreatedDate DESC<br/>
+                        LIMIT 200
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ServiceNow */}
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">ServiceNow</h4>
+                    <div className="bg-white border border-gray-200 rounded p-3">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Configuration:</p>
+                      <div className="bg-gray-50 p-2 rounded mb-3">
+                        <p className="text-xs font-mono text-gray-800">
+                          {`{`}<br/>
+                          &nbsp;&nbsp;"instance": "dev12345",<br/>
+                          &nbsp;&nbsp;"username": "admin"<br/>
+                          {`}`}
+                        </p>
+                        <p className="text-xs text-gray-600 mt-2">
+                          <strong>Instance:</strong> Just the instance name (e.g., "dev12345"), not the full URL
+                        </p>
+                      </div>
+                      <p className="text-sm font-medium text-gray-700 mb-2">Sample Query (Table API):</p>
+                      <div className="bg-gray-900 text-green-400 p-2 rounded text-xs font-mono">
+                        table:incident?sysparm_query=active=true^priority=1<br/>
+                        <br/>
+                        table:sys_user?sysparm_limit=100<br/>
+                        <br/>
+                        table:cmdb_ci_server?sysparm_query=operational_status=1
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2131,40 +2598,35 @@ const DocumentationPage = () => {
 
               {/* File Connections */}
               <div className="border-l-4 border-purple-500 pl-4 py-2">
-                <h3 className="text-xl font-semibold text-gray-900 mb-3">File Connections (CSV/Excel)</h3>
+                <h3 className="text-xl font-semibold text-gray-900 mb-3">File Connections</h3>
 
                 <p className="text-gray-700 mb-3">
-                  Connect to file storage for CSV and Excel file operations.
+                  Connect to file storage for CSV file operations.
                 </p>
 
                 <div className="bg-gray-50 rounded-lg p-4">
-                  <div className="bg-white border border-gray-200 rounded p-3">
-                    <p className="text-sm font-medium text-gray-700 mb-2">Required Fields:</p>
-                    <ul className="list-disc list-inside text-sm text-gray-600 space-y-1 ml-2">
-                      <li><strong>filePath:</strong> Full path to the file or directory</li>
-                      <li><strong>fileType:</strong> "csv" or "excel"</li>
-                      <li><strong>delimiter:</strong> (CSV only) Field delimiter (default: ",")</li>
-                      <li><strong>sheetName:</strong> (Excel only) Sheet name to read/write</li>
-                    </ul>
-                    <div className="mt-3 bg-gray-50 p-2 rounded">
-                      <p className="text-xs font-mono text-gray-800 mb-2">CSV Example:</p>
-                      <p className="text-xs font-mono text-gray-800">
-                        {`{`}<br/>
-                        &nbsp;&nbsp;"filePath": "/data/customers.csv",<br/>
-                        &nbsp;&nbsp;"fileType": "csv",<br/>
-                        &nbsp;&nbsp;"delimiter": ","<br/>
-                        {`}`}
-                      </p>
-                    </div>
-                    <div className="mt-3 bg-gray-50 p-2 rounded">
-                      <p className="text-xs font-mono text-gray-800 mb-2">Excel Example:</p>
-                      <p className="text-xs font-mono text-gray-800">
-                        {`{`}<br/>
-                        &nbsp;&nbsp;"filePath": "/data/sales.xlsx",<br/>
-                        &nbsp;&nbsp;"fileType": "excel",<br/>
-                        &nbsp;&nbsp;"sheetName": "Sheet1"<br/>
-                        {`}`}
-                      </p>
+                  {/* CSV */}
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-2">CSV</h4>
+                    <div className="bg-white border border-gray-200 rounded p-3">
+                      <p className="text-sm font-medium text-gray-700 mb-2">Configuration:</p>
+                      <div className="bg-gray-50 p-2 rounded mb-3">
+                        <p className="text-xs font-mono text-gray-800">
+                          {`{`}<br/>
+                          &nbsp;&nbsp;"filePath": "/data/customers.csv"<br/>
+                          {`}`}
+                        </p>
+                        <p className="text-xs text-gray-600 mt-2">
+                          <strong>Note:</strong> No password needed for CSV files
+                        </p>
+                      </div>
+                      <p className="text-sm font-medium text-gray-700 mb-2">Sample Query:</p>
+                      <div className="bg-gray-900 text-green-400 p-2 rounded text-xs font-mono">
+                        /path/to/your/file.csv<br/>
+                        <br/>
+                        <span className="text-gray-500">// In tasks, you can read from CSV and load to database</span><br/>
+                        <span className="text-gray-500">// Or export database query results to CSV</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2179,6 +2641,7 @@ const DocumentationPage = () => {
                   <li>When editing a connection, you must re-enter the password if you want to change it</li>
                   <li>Use strong, unique passwords for each connection</li>
                   <li>Limit connection permissions to only what's needed (read-only when possible)</li>
+                  <li><strong>Salesforce:</strong> Password must be your password + security token combined with no space</li>
                 </ul>
               </div>
 
@@ -2189,11 +2652,11 @@ const DocumentationPage = () => {
                   Always test your connection before saving:
                 </p>
                 <ol className="list-decimal list-inside space-y-1 text-blue-800 text-sm ml-4">
-                  <li>Fill in all required fields</li>
-                  <li>Enter the password in the password field</li>
+                  <li>Fill in all required fields in the JSON configuration</li>
+                  <li>Enter the password in the password field (above JSON)</li>
                   <li>Click "Test Connection" button</li>
-                  <li>Wait for success message</li>
-                  <li>If successful, click "Save" to create the connection</li>
+                  <li>Wait for success message with connection details</li>
+                  <li>If successful, click "Create Connection" to save</li>
                 </ol>
               </div>
             </div>
@@ -3409,102 +3872,45 @@ const ExecutionMonitor = ({ executionId, onClose }) => {
 
 const DataPipelineApp = () => {
   const { data: session } = useSession();
-  const currentUser = session?.user;
-  const [currentPage, setCurrentPage] = useState('dashboard');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [currentTeam, setCurrentTeam] = useState(null);
-  const [userTeams, setUserTeams] = useState([]);
-  const [taskFormData, setTaskFormData] = useState(null);
-  useEffect(() => {
-    loadUserTeams();
+  const [state, dispatch] = useReducer(appReducer, initialState);
+
+  // Cache teams data
+  const loadUserTeams = useCallback(async () => {
+    try {
+      dispatch({ type: 'SET_LOADING', loading: true });
+      const teams = await api.teams.list();
+      dispatch({ type: 'SET_TEAMS', teams });
+    } catch (error) {
+      console.error('Failed to load teams:', error);
+    } finally {
+      dispatch({ type: 'SET_LOADING', loading: false });
+    }
   }, []);
 
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'dashboard':
-        return <DashboardPage />;
-      case 'connections':
-        return <ConnectionsPage />;
-      case 'query':
-        return <DataExplorerPage setCurrentPage={setCurrentPage} setTaskFormData={setTaskFormData} />;
-      case 'tasks':
-        return <TasksPage setCurrentPage={setCurrentPage} setTaskFormData={setTaskFormData} />;
-      case 'create-task':
-      case 'edit-task':
-        return <TaskFormPage taskFormData={taskFormData} setCurrentPage={setCurrentPage} />;
-      case 'admin':
-        return <AdminPage />
-      default:
-        return <DashboardPage />;
+  useEffect(() => {
+    loadUserTeams();
+  }, [loadUserTeams]);
+
+  // Memoize page rendering
+  const content = useMemo(() => {
+    if (state.loading) {
+      return <LoadingSpinner />;
     }
-  };
-
-  const loadUserTeams = async () => {
-      try {
-        const teams = await api.teams.list();
-        setUserTeams(teams);
-
-        if (teams.length > 0) {
-          const savedTeamId = localStorage.getItem('currentTeamId');
-          const defaultTeam = savedTeamId
-            ? teams.find(t => t.id === parseInt(savedTeamId))
-            : teams[0];
-
-          const selectedTeam = defaultTeam || teams[0];
-          setCurrentTeam(selectedTeam);
-          localStorage.setItem('currentTeamId', selectedTeam.id.toString()); // ✅ Ensure it's a string
-        }
-      } catch (error) {
-        console.error('Failed to load teams:', error);
-      }
-    };
+    return <MainContent state={state} dispatch={dispatch} />;
+  }, [state.loading, state.currentPage]);
 
   return (
-    <TeamContext.Provider value={{ currentTeam, setCurrentTeam, currentUser }}>
+    <AppStateProvider value={{ state, dispatch }}>
       <div className="min-h-screen bg-gray-50 flex">
-        <Sidebar
-          currentPage={currentPage}
-          setCurrentPage={setCurrentPage}
-          sidebarOpen={sidebarOpen}
-          setSidebarOpen={setSidebarOpen}
-          currentUser={currentUser}
-        />
-
+        <MemoizedSidebar />
         <div className="flex-1 flex flex-col min-w-0">
-          <TopBar
-            setSidebarOpen={setSidebarOpen}
-            userTeams={userTeams}
-            currentUser={currentUser}
-          />
-
-          <main className="flex-1 p-4 lg:p-8 overflow-auto">
-            {currentPage === 'dashboard' && <DashboardPage />}
-            {currentPage === 'connections' && <ConnectionsPage />}
-            {currentPage === 'query' && (
-              <QueryToolPage
-                setCurrentPage={setCurrentPage}
-                setTaskFormData={setTaskFormData}
-              />
-            )}
-            {currentPage === 'tasks' && (
-            <TasksPage
-                setCurrentPage={setCurrentPage}
-                setTaskFormData={setTaskFormData}
-              />
-            )}
-            {currentPage === 'task-form' && (
-                <TaskFormPage
-                    taskFormData={taskFormData}
-                    setCurrentPage={setCurrentPage}
-                />
-              )}
-            {currentPage === 'documentation' && <DocumentationPage />}
-            {currentPage === 'admin' && <AdminPage />}
-          </main>
+          <MemoizedTopBar />
+          {content}
         </div>
       </div>
-    </TeamContext.Provider>
+    </AppStateProvider>
   );
 };
+
 
 export default DataPipelineApp;

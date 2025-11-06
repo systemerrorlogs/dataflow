@@ -81,7 +81,7 @@ export async function DELETE(request, { params }) {
 
     // Also deactivate all memberships
     await query(`
-      UPDATE user_team_memberships
+      UPDATE team_members
       SET is_active = false
       WHERE team_id = $1
     `, [teamId]);

@@ -8,7 +8,7 @@ const pool = new Pool({
 async function fixPassword() {
   try {
     const email = 'admin@example.com';
-    const password = 'password123';
+    const password = 'R3pt1l3#1';
 
     // Generate hash
     const hash = bcrypt.hashSync(password, 10);

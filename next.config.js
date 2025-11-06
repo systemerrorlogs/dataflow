@@ -1,14 +1,31 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
-  swcMinify: true,
-  webpack: (config) => {
-    config.resolve.alias = {
-      ...config.resolve.alias,
-      '@': __dirname,
-    };
+  // ✅ Moved from experimental.serverComponentsExternalPackages
+  serverExternalPackages: [
+    'oracledb',
+    'mssql',
+    'mysql2',
+    'pg',
+    'vertica',
+    'jsforce',
+    'axios',
+    'bcryptjs',
+  ],
+
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        fs: false,
+        net: false,
+        tls: false,
+        crypto: false,
+        stream: false,
+        path: false,
+        os: false,
+      };
+    }
     return config;
   },
-}
+};
 
-module.exports = nextConfig
+module.exports = nextConfig;

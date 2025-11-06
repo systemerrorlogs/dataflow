@@ -31,7 +31,7 @@ export async function GET(request) {
           )
         ) FILTER (WHERE t.id IS NOT NULL) as teams
       FROM users u
-      LEFT JOIN user_team_memberships utm ON u.id = utm.user_id AND utm.is_active = true
+      LEFT JOIN team_members utm ON u.id = utm.user_id AND utm.is_active = true
       LEFT JOIN teams t ON utm.team_id = t.id AND t.is_active = true
       GROUP BY u.id
       ORDER BY u.created_at DESC

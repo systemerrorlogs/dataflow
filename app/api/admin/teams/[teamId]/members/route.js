@@ -22,7 +22,7 @@ export async function POST(request, { params }) {
 
     // Check if membership already exists
     const existing = await query(`
-      SELECT id, is_active FROM user_team_memberships
+      SELECT id, is_active FROM team_members
       WHERE user_id = $1 AND team_id = $2
     `, [user_id, teamId]);
 
@@ -31,7 +31,7 @@ export async function POST(request, { params }) {
     if (existing.rows.length > 0) {
       // Reactivate existing membership
       result = await query(`
-        UPDATE user_team_memberships
+        UPDATE team_members
         SET is_active = true, role = $1
         WHERE user_id = $2 AND team_id = $3
         RETURNING id, user_id, team_id, role, joined_at
@@ -39,7 +39,7 @@ export async function POST(request, { params }) {
     } else {
       // Create new membership
       result = await query(`
-        INSERT INTO user_team_memberships (user_id, team_id, role, is_active)
+        INSERT INTO team_members (user_id, team_id, role, is_active)
         VALUES ($1, $2, $3, true)
         RETURNING id, user_id, team_id, role, joined_at
       `, [user_id, teamId, role]);
@@ -70,7 +70,7 @@ export async function DELETE(request, { params }) {
     }
 
     const result = await query(`
-      UPDATE user_team_memberships
+      UPDATE team_members
       SET is_active = false
       WHERE user_id = $1 AND team_id = $2
       RETURNING id
