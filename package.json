@@ -9,28 +9,29 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "axios": "^1.13.1",
-    "bcryptjs": "^2.4.3",
-    "cron-parser": "^4.9.0",
+    "@tailwindcss/postcss": "^4.1.16",
+    "axios": "^1.13.2",
+    "bcryptjs": "^3.0.3",
+    "cron-parser": "^5.4.0",
     "jsforce": "^3.10.8",
-    "lucide-react": "^0.263.1",
-    "mssql": "^12.0.0",
+    "lucide-react": "^0.552.0",
+    "mssql": "^12.1.0",
     "mysql2": "^3.15.3",
     "next": "^16.0.1",
-    "next-auth": "^4.24.11",
-    "node-cron": "^3.0.3",
+    "next-auth": "^4.24.13",
+    "node-cron": "^4.2.1",
     "oracledb": "^6.10.0",
     "papaparse": "^5.5.3",
     "pg": "^8.16.3",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "vertica": "^0.5.5"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.21",
-    "eslint": "^8.57.1",
-    "eslint-config-next": "^14.0.4",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^16.0.1",
     "postcss": "^8.5.6",
-    "tailwindcss": "^3.4.18"
+    "tailwindcss": "^4.1.16"
   }
 }
