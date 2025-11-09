@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+//  turbo: false,false
+
   serverExternalPackages: [
     'oracledb',
     'mssql',
