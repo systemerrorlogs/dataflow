@@ -10,10 +10,8 @@ const nextConfig = {
     'vertica',
     'jsforce',
     'axios',
-    'bcryptjs',
+    'bcryptjs'
   ],
-
-  turbopack: {},
 
   webpack: (config, { isServer }) => {
     if (!isServer) {

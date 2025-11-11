@@ -5,7 +5,7 @@ import LogsModal from './LogsModal';
 import ExecutionHistoryModal from './ExecutionHistoryModal';
 import { useSession } from 'next-auth/react';
 import { getEnabledConnectors, getConnectorMetadata, isConnectorEnabled } from '@/lib/config/connectors';
-import ScheduleBuilder from './ScheduleBuilder'; // or wherever you put it
+//import ScheduleBuilder from './ScheduleBuilder'; // or wherever you put it
 import { toCronExpression } from '@/lib/cronHelper';
 
 const TeamContext = createContext();
@@ -851,7 +851,7 @@ const QueryToolPage = ({ setCurrentPage, setTaskFormData }) => {
   const [loading, setLoading] = useState(false);
 
   // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
+  const [queryPage, setQueryPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
 
   useEffect(() => {

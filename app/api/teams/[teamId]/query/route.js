@@ -373,66 +373,6 @@ async function executeServiceNowQuery(config, queryText) {
   }
 }
 
-// Excel query execution (read worksheet)
-async function executeExcelQuery(config, worksheetName) {
-  try {
-    const fs = require('fs');
-    const XLSX = require('xlsx');
-
-    if (!fs.existsSync(config.filePath)) {
-      return {
-        success: false,
-        error: `File not found: ${config.filePath}`,
-      };
-    }
-
-    if (!worksheetName) {
-      return {
-        success: false,
-        error: 'Worksheet name is required for Excel connections',
-      };
-    }
-
-    const startTime = Date.now();
-    const workbook = XLSX.readFile(config.filePath);
-
-    if (!workbook.SheetNames.includes(worksheetName)) {
-      return {
-        success: false,
-        error: `Worksheet '${worksheetName}' not found. Available sheets: ${workbook.SheetNames.join(', ')}`,
-      };
-    }
-
-    const worksheet = workbook.Sheets[worksheetName];
-    const data = XLSX.utils.sheet_to_json(worksheet);
-    const executionTime = Date.now() - startTime;
-
-    if (data.length === 0) {
-      return {
-        success: true,
-        columns: [],
-        rows: [],
-        rowCount: 0,
-        executionTime,
-        message: 'Worksheet is empty',
-      };
-    }
-
-    return {
-      success: true,
-      columns: Object.keys(data[0]),
-      rows: data,
-      rowCount: data.length,
-      executionTime,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message,
-    };
-  }
-}
-
 // CSV query execution (read file)
 async function executeCSVQuery(config) {
   try {
