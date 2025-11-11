@@ -2,15 +2,32 @@
 
 export default function GlobalError({ error, reset }) {
   return (
-    <html>
+    <html lang="en">
+      <head>
+        <title>Error - DataFlow</title>
+      </head>
       <body>
-        <div className="flex items-center justify-center min-h-screen bg-gray-50">
-          <div className="text-center">
-            <h1 className="text-6xl font-bold text-gray-900">Error</h1>
-            <p className="text-xl text-gray-600 mt-4">Something went wrong</p>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '100vh',
+          backgroundColor: '#f9fafb'
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <h1 style={{ fontSize: '3rem', fontWeight: 'bold' }}>Error</h1>
+            <p style={{ fontSize: '1.25rem', marginTop: '1rem' }}>Something went wrong</p>
             <button
               onClick={reset}
-              className="mt-6 inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              style={{
+                marginTop: '1.5rem',
+                padding: '0.75rem 1.5rem',
+                backgroundColor: '#2563eb',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.5rem',
+                cursor: 'pointer'
+              }}
             >
               Try Again
             </button>
