@@ -20,7 +20,8 @@ const nextConfig = {
     'vertica',
     'jsforce',
     'axios',
-    'bcryptjs'
+    'bcryptjs',
+    'exceljs'
   ],
 
   webpack: (config, { isServer, webpack }) => {

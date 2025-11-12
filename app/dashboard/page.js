@@ -3,7 +3,7 @@
 // Force dynamic
 export const dynamic = 'force-dynamic';
 export const dynamicParams = true;
-export const revalidate = 0;
+export const revalidate = false;
 
 import DataPipelineApp from '@/components/DataPipelineApp';
 
