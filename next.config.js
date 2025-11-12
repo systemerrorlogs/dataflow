@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
 //  turbo: false,false
-  output: 'standalone',
+//  output: 'standalone',
 
   serverExternalPackages: [
     'oracledb',
@@ -14,12 +14,9 @@ const nextConfig = {
     'bcryptjs'
   ],
 
-  // Disable static optimization for error pages
-  staticPageGenerationTimeout: 1000,
-
-  // Skip static export for problematic pages
-  skipTrailingSlashRedirect: true,
-  skipMiddlewareUrlNormalize: true,
+  experimental: {
+    ppr: false,
+  },
 
   webpack: (config, { isServer }) => {
     if (!isServer) {
