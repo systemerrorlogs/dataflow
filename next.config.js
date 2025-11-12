@@ -1,7 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-//  turbo: false,false
-//  output: 'standalone',
+  output: 'standalone',
+
+  // Disable static page generation for error pages
+  generateBuildId: async () => {
+    return 'build'
+  },
+
+  // Skip static generation
+  experimental: {
+    outputFileTracingRoot: undefined,
+  },
 
   serverExternalPackages: [
     'oracledb',
@@ -14,11 +23,7 @@ const nextConfig = {
     'bcryptjs'
   ],
 
-  experimental: {
-    ppr: false,
-  },
-
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, webpack }) => {
     if (!isServer) {
       config.resolve.fallback = {
         fs: false,
@@ -30,6 +35,15 @@ const nextConfig = {
         os: false,
       };
     }
+
+    config.plugins.push(
+      new webpack.IgnorePlugin({
+        resourceRegExp: /next\/document/,
+      })
+    );
+
+    config.parallelism = 10;
+
     return config;
   },
 };
