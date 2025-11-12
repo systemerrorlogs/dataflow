@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "autoprefixer": "^10.4.20",
     "axios": "^1.13.2",
     "bcryptjs": "^2.4.3",
     "cron-parser": "^5.4.0",
@@ -22,21 +23,17 @@
     "oracledb": "^6.10.0",
     "papaparse": "^5.5.3",
     "pg": "^8.16.3",
+    "postcss": "^8.4.47",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "tailwindcss": "^3.4.17",
     "vertica": "^0.5.5",
-    "autoprefixer": "^10.4.22",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.17"
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@next/bundle-analyzer": "^16.0.1",
-    "@tailwindcss/postcss": "^4.1.16",
-    "autoprefixer": "^10.4.22",
     "eslint": "^9.39.1",
-    "eslint-config-next": "^16.0.1",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.17"
+    "eslint-config-next": "^16.0.1"
   },
   "engines": {
     "node": "20.x"
