@@ -1,6 +1,7 @@
 // File: app/api/teams/[teamId]/tasks/[...action]/route.js
 // Consolidates all task-related routes into one file
-
+export const dynamic = 'force-dynamic';
+export const revalidate = false;
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';

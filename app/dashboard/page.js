@@ -1,11 +1,10 @@
 'use client';
 
-// Force dynamic
-export const dynamic = 'force-dynamic';
-export const dynamicParams = true;
-export const revalidate = false;
+import dynamic from 'next/dynamic';
 
-import DataPipelineApp from '@/components/DataPipelineApp';
+const DataPipelineApp = dynamic(() => import('@/components/DataPipelineApp'), {
+  ssr: false,
+});
 
 export default function DashboardPage() {
   return <DataPipelineApp />;

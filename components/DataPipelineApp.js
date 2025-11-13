@@ -1,43 +1,46 @@
 'use client';
+
 import React, { useState, useMemo, createContext, useContext, useEffect } from 'react';
 import { Home, Database, Search, FileText, Plus, RefreshCw, Menu, X, User, Users, LogOut, CheckCircle, XCircle, Clock, PlayCircle, Settings, ChevronDown, BookOpen, HelpCircle, Download } from 'lucide-react';
 import LogsModal from './LogsModal';
 import ExecutionHistoryModal from './ExecutionHistoryModal';
 import { useSession } from 'next-auth/react';
-import { getEnabledConnectors, getConnectorMetadata, isConnectorEnabled } from '@/lib/config/connectors';
-//import ScheduleBuilder from './ScheduleBuilder'; // or wherever you put it
 import { toCronExpression } from '@/lib/cronHelper';
 
-const TeamContext = createContext();
+const TeamContext = createContext({
+  currentTeam: null,
+  setCurrentTeam: () => {},
+  currentUser: null,
+});
 
 const api = {
   async call(endpoint, options = {}) {
-      const teamId = localStorage.getItem('currentTeamId');
+    const teamId = localStorage.getItem('currentTeamId');
 
-      // ✅ CRITICAL FIX: Validate teamId before making API call
-      if (!teamId || teamId === 'null' || teamId === 'undefined') {
-        throw new Error('No team selected. Please select a team first.');
-      }
+    // ✅ CRITICAL FIX: Validate teamId before making API call
+    if (!teamId || teamId === 'null' || teamId === 'undefined') {
+      throw new Error('No team selected. Please select a team first.');
+    }
 
-      const teamIdInt = parseInt(teamId, 10);
-      if (isNaN(teamIdInt)) {
-        throw new Error('Invalid team ID');
-      }
+    const teamIdInt = parseInt(teamId, 10);
+    if (isNaN(teamIdInt)) {
+      throw new Error('Invalid team ID');
+    }
 
-      const res = await fetch(`/api/teams/${teamIdInt}${endpoint}`, {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...options.headers,
-        },
-      });
+    const res = await fetch(`/api/teams/${teamIdInt}${endpoint}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
 
-      if (!res.ok) {
-        const error = await res.json();
-        throw new Error(error.error || 'API call failed');
-      }
-      return res.json();
-    },
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.error || 'API call failed');
+    }
+    return res.json();
+  },
 
   teams: {
     list: () => fetch('/api/teams').then(r => r.json()),

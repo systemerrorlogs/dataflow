@@ -1,50 +1,31 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
+  reactStrictMode: false,
 
-  // Disable static page generation for error pages
-  generateBuildId: async () => {
-    return 'build'
-  },
-
-  // Skip static generation
   experimental: {
-    outputFileTracingRoot: undefined,
+    serverComponentsExternalPackages: [
+      'oracledb',
+      'mssql',
+      'mysql2',
+      'pg',
+      'jsforce',
+      'bcryptjs',
+      'papaparse',
+      'node-cron',
+      'exceljs',
+      'vertica'
+    ],
   },
 
-  serverExternalPackages: [
-    'oracledb',
-    'mssql',
-    'mysql2',
-    'pg',
-    'vertica',
-    'jsforce',
-    'axios',
-    'bcryptjs',
-    'exceljs'
-  ],
-
-  webpack: (config, { isServer, webpack }) => {
+  webpack: (config, { isServer }) => {
     if (!isServer) {
       config.resolve.fallback = {
         fs: false,
         net: false,
         tls: false,
         crypto: false,
-        stream: false,
-        path: false,
-        os: false,
       };
     }
-
-    config.plugins.push(
-      new webpack.IgnorePlugin({
-        resourceRegExp: /next\/document/,
-      })
-    );
-
-    config.parallelism = 10;
-
     return config;
   },
 };

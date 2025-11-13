@@ -1,17 +1,16 @@
-import './globals.css'
+import './globals.css';
 import { Providers } from './providers';
-
-export const metadata = {
-  title: 'DataFlow - Data Pipeline Management',
-  description: 'Enterprise data pipeline management platform',
-}
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
+      <head>
+        <title>DataFlow - Data Pipeline Management</title>
+        <meta name="description" content="Enterprise data pipeline management platform" />
+      </head>
       <body>
         <Providers>{children}</Providers>
       </body>
     </html>
-  )
+  );
 }
